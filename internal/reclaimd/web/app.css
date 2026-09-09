@@ -3,67 +3,69 @@
    No web fonts are loaded: this runs on a router that may have no route to the
    internet, and the CJK fallbacks below are all locally installed faces. */
 :root{
-  --bg:#f3f6f7; --surface:#fff; --surface-2:#e9eef0; --sunk:#dde5e8;
-  --line:#d3dcdf; --line-2:#c2ced2;
-  --ink:#0e1a1f; --ink-2:#42555c; --ink-3:#6d7f86;
-  --accent:#0e7490; --accent-ink:#0b5c73;
+  /* Light by default. Contrast ratios below were measured, not eyeballed:
+     every text colour clears 4.5:1 on its own ground, and the heat ramp is
+     monotonically darker at every step so severity survives greyscale and
+     colour blindness. */
+  --bg:#f4f7f7; --surface:#ffffff; --surface-2:#e9eeee; --sunk:#eef2f2;
+  --line:#d7e0e0; --line-2:#bcc9c9;
+  --ink:#111819;            /* 17.97:1 on white */
+  --ink-2:#3c4a4d;          /*  9.22:1 */
+  --ink-3:#5c6a6e;          /*  5.61:1 -- carries every caption, axis and
+                                 legend, so it is the one that most needed
+                                 fixing: the previous value sat at 4.17:1 */
+  --accent:#0b6b70;         /*  6.27:1 */ --accent-ink:#08585c;
 
-  --ok:#0f766e; --warn:#b45309; --bad:#b91c1c; --info:#1d4ed8;
-  --grade-good:#0f766e; --grade-watch:#b45309;
-  --grade-degraded:#c2410c; --grade-failing:#b91c1c;
+  --ok:#0b6b70; --warn:#8a5d06; --bad:#a11d1d; --info:#1a4f9c;
+  --grade-good:#0b6b70; --grade-watch:#8a5d06;
+  --grade-degraded:#b34a10; --grade-failing:#a11d1d;
 
-  /* Latency ramp. Monotonic in lightness so it survives colour-blindness, and
-     dropouts are encoded as a full-height tick -- a shape, not a hue. */
-  --heat-0:#c3d1d5; --heat-1:#f2b437; --heat-2:#ef7d2a; --heat-3:#d92d20;
-  --heat-drop:#0e1a1f; --heat-skip:#e8edef;
+  /* Severity ramp. Luminance falls at every step (0.88 -> 0.63 -> 0.41 ->
+     0.19 -> 0.09), so "worse" reads as "darker" with no colour at all. */
+  --heat-0:#b3d6d8; --heat-1:#e0a020; --heat-2:#c25a15; --heat-3:#a11d1d;
+  --heat-drop:#111819;
+  /* Deferred sits off the ramp on purpose: a neutral grey against the teal of
+     a normal block. A pass that backed off a lot is mostly this colour, and it
+     must never be mistakable for a healthy one. */
+  --heat-skip:#9ea7a7;
 
-  /* Diverging ramp for the waterfall's diff modes. */
-  --diff-better-2:#0e7490; --diff-better-1:#7dd3d8; --diff-same:#e2e9eb;
-  --diff-worse-1:#f2b437; --diff-worse-2:#d92d20;
+  /* Diverging ramp for the waterfall's diff modes; the neutral matches --sunk
+     so masked cells recede rather than compete. */
+  --diff-better-2:#0b6b70; --diff-better-1:#7fb3b6; --diff-same:#eef2f2;
+  --diff-worse-1:#e0a020; --diff-worse-2:#a11d1d;
+
   /* Freshness, keyed to the drive's own interval rather than absolute days. */
-  --fresh-0:#0f766e; --fresh-1:#7fb3ab; --fresh-2:#f2b437; --fresh-3:#d92d20;
+  --fresh-0:#d9eaea; --fresh-1:#b3d6d8; --fresh-2:#e0a020; --fresh-3:#a11d1d;
 
-  /* Measured vs inferred, carried over from c14: the report must never let a
-     derived number pass for an observed one. */
-  --measured:#0e7490; --est:#8a9aa0;
+  /* Measured versus inferred, carried over from the existing reports: a
+     derived number must never pass for an observed one. */
+  --measured:#0b6b70; --est:#8a5d06;
 
   --sans:"IBM Plex Sans","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
   --cond:"IBM Plex Sans Condensed","IBM Plex Sans","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 
   --strip-h:46px; --radius:4px; --maxw:1080px;
-  --shadow:0 1px 2px rgba(14,26,31,.06),0 8px 24px -14px rgba(14,26,31,.20);
+  --shadow:0 1px 2px rgba(17,24,25,.05),0 6px 20px -14px rgba(17,24,25,.28);
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0b1215; --surface:#121e22; --surface-2:#18262b; --sunk:#0d181c;
-  --line:#243539; --line-2:#2f454b;
-  --ink:#dde8ea; --ink-2:#a4b8bd; --ink-3:#7e9299;
-  --accent:#22d3ee; --accent-ink:#67e8f9;
-  --ok:#2dd4bf; --warn:#fbbf24; --bad:#f87171; --info:#93c5fd;
-  --grade-good:#2dd4bf; --grade-watch:#fbbf24;
-  --grade-degraded:#fb923c; --grade-failing:#f87171;
-  --heat-0:#2b3f45; --heat-1:#eab308; --heat-2:#f97316; --heat-3:#ef4444;
-  --heat-drop:#e6f2f5; --heat-skip:#16242a;
-  --diff-better-2:#22d3ee; --diff-better-1:#2b6b78; --diff-same:#1e2f35;
-  --diff-worse-1:#eab308; --diff-worse-2:#ef4444;
-  --fresh-0:#2dd4bf; --fresh-1:#2b6b62; --fresh-2:#eab308; --fresh-3:#ef4444;
-  --measured:#22d3ee; --est:#5d7178;
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -14px rgba(0,0,0,.6);
-}}
+
+/* Dark is opt-in via the toggle rather than automatic. Flip this selector to
+   also cover @media (prefers-color-scheme:dark){:root:not([data-theme="light"])}
+   if you would rather it follow the system again. */
 :root[data-theme="dark"]{
   --bg:#0b1215; --surface:#121e22; --surface-2:#18262b; --sunk:#0d181c;
   --line:#243539; --line-2:#2f454b;
-  --ink:#dde8ea; --ink-2:#a4b8bd; --ink-3:#7e9299;
-  --accent:#22d3ee; --accent-ink:#67e8f9;
-  --ok:#2dd4bf; --warn:#fbbf24; --bad:#f87171; --info:#93c5fd;
+  --ink:#e3edef; --ink-2:#aec1c6; --ink-3:#8ba1a8;
+  --accent:#3fd7ee; --accent-ink:#7ce6f7;
+  --ok:#2dd4bf; --warn:#fbbf24; --bad:#fb7c7c; --info:#93c5fd;
   --grade-good:#2dd4bf; --grade-watch:#fbbf24;
-  --grade-degraded:#fb923c; --grade-failing:#f87171;
-  --heat-0:#2b3f45; --heat-1:#eab308; --heat-2:#f97316; --heat-3:#ef4444;
-  --heat-drop:#e6f2f5; --heat-skip:#16242a;
-  --diff-better-2:#22d3ee; --diff-better-1:#2b6b78; --diff-same:#1e2f35;
-  --diff-worse-1:#eab308; --diff-worse-2:#ef4444;
-  --fresh-0:#2dd4bf; --fresh-1:#2b6b62; --fresh-2:#eab308; --fresh-3:#ef4444;
-  --measured:#22d3ee; --est:#5d7178;
+  --grade-degraded:#fb923c; --grade-failing:#fb7c7c;
+  --heat-0:#2f5a60; --heat-1:#c98a12; --heat-2:#e2701f; --heat-3:#f4605a;
+  --heat-drop:#e6f2f5; --heat-skip:#3b4a4e;
+  --diff-better-2:#3fd7ee; --diff-better-1:#2b6b78; --diff-same:#16242a;
+  --diff-worse-1:#c98a12; --diff-worse-2:#f4605a;
+  --fresh-0:#1d3d42; --fresh-1:#2f5a60; --fresh-2:#c98a12; --fresh-3:#f4605a;
+  --measured:#3fd7ee; --est:#c9a45d;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -14px rgba(0,0,0,.6);
 }
 
@@ -96,8 +98,10 @@ p{margin:0}
 .seg button{background:var(--surface);border:0;color:var(--ink-2);font:inherit;font-size:13px;
   padding:4px 10px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
-:root[data-theme="dark"] .seg button[aria-pressed="true"],
-:root:not([data-theme="light"]) .seg button[aria-pressed="true"]{color:#04191f}
+/* Only the explicit dark theme flips this. The old :not([data-theme="light"])
+   form also matched the default, unset state, which put near-black text on the
+   teal accent at 3.4:1. */
+:root[data-theme="dark"] .seg button[aria-pressed="true"]{color:#04191f}
 .iconbtn{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);
   color:var(--ink-2);cursor:pointer;font-size:14px;padding:3px 9px}
 .conn{width:9px;height:9px;border-radius:50%;background:var(--ink-3);display:inline-block}
