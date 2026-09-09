@@ -25,7 +25,7 @@ export const DICT = {
     'rule.LAST_PASS_CLEAN': '最近一轮（第 {seq} 轮）全程干净。',
 
     'adaptive.title': '决策台',
-    'adaptive.lede': '每个数都是这支盘自己推出来的。展开看公式、输入，和下一轮会往哪走。',
+    'adaptive.lede': '每个数都是这支盘自己推出来的。点任意一行展开细节。',
     'ctrl.scan_interval': '扫描间隔', 'ctrl.thresholds': '慢块阈值',
     'ctrl.duty_cycle': '占空比温控', 'ctrl.cooldown': '事故后冷却',
     'ctrl.read_size': '单次读取大小',
@@ -63,7 +63,7 @@ export const DICT = {
     'live.found.fmt': '慢 {slow} · 危险 {danger} · 退避 {defer} 段',
 
     'map.title': '全盘延迟地图',
-    'map.note': '每一列取区间内最慢的那一块，不取平均——1792 毫秒混进 153 个正常块，平均下来只剩 21.6 毫秒。',
+    'map.note': '每一列取区间内最慢的那一块。',
     'map.legend.normal': '正常', 'map.legend.slow': '慢',
     'map.legend.bad': '很慢', 'map.legend.danger': '危险',
     'map.legend.drop': '掉线', 'map.legend.skip': '未测量',
@@ -72,12 +72,12 @@ export const DICT = {
 
     'stack.abs': '绝对', 'stack.prev': '对比上一轮', 'stack.first': '对比首轮',
     'stack.legend.better': '变好', 'stack.legend.same': '两轮都正常', 'stack.legend.worse': '变差',
-    'stack.diffNote': '差分模式屏蔽两轮都正常的格子，否则健康盘 8–12 毫秒的抖动会铺满整张图。这里的"变好"是推导的，经回探证实的治愈在事件日志里。',
+    'stack.diffNote': '差分模式屏蔽两轮都正常的格子，否则健康盘本身的正常抖动会铺满整张图。这里的"变好"是推导的，经回探证实的治愈在事件日志里。',
 
     'fresh.title': '新鲜度地图',
     'fresh.oldest': '最老的一块数据已经 {age} 没被读过',
     'fresh.never': '还有 {n} 段从未被读到过',
-    'fresh.caveat': '这是本工具读到的时间，是新鲜度的下界：文件系统自己的读取同样会刷新数据，但从裸设备这一层看不见。',
+    'fresh.caveat': '这只统计本工具读到的时间。',
     'fresh.legend.0': '刚读过', 'fresh.legend.1': '正常老化',
     'fresh.legend.2': '逾期', 'fresh.legend.3': '陈旧/从未读到',
 
@@ -142,7 +142,7 @@ export const DICT = {
     'rule.LAST_PASS_CLEAN': 'The last pass (#{seq}) was clean end to end.',
 
     'adaptive.title': 'Decision desk',
-    'adaptive.lede': 'Every number here was derived from this drive. Expand a row for the formula, the inputs, and where the next pass would take it.',
+    'adaptive.lede': 'Every number here was derived from this drive. Click any row to expand for details.',
     'ctrl.scan_interval': 'Scan interval', 'ctrl.thresholds': 'Slow-block thresholds',
     'ctrl.duty_cycle': 'Duty cycle', 'ctrl.cooldown': 'Cooldown',
     'ctrl.read_size': 'Read size',
@@ -180,7 +180,7 @@ export const DICT = {
     'live.found.fmt': '{slow} slow · {danger} danger · {defer} segments deferred',
 
     'map.title': 'Whole-drive latency map',
-    'map.note': 'Each column shows the WORST block in its range, never the mean — one 1792 ms block averaged with 153 healthy ones reads as 21.6 ms.',
+    'map.note': 'Each column shows the worst block in its range.',
     'map.legend.normal': 'normal', 'map.legend.slow': 'slow',
     'map.legend.bad': 'very slow', 'map.legend.danger': 'danger',
     'map.legend.drop': 'dropout', 'map.legend.skip': 'not measured',
@@ -189,12 +189,12 @@ export const DICT = {
 
     'stack.abs': 'Absolute', 'stack.prev': 'vs previous', 'stack.first': 'vs first',
     'stack.legend.better': 'better', 'stack.legend.same': 'both normal', 'stack.legend.worse': 'worse',
-    'stack.diffNote': 'Diff mode masks cells that were normal in both passes; the ordinary 8-12 ms jitter of a healthy drive would otherwise fill the chart. "Better" here is inferred — healing confirmed by re-probe is in the event log.',
+    'stack.diffNote': 'Diff mode masks cells that were normal in both passes; the ordinary jitter of a healthy drive would otherwise fill the chart. "Better" here is inferred — healing confirmed by re-probe is in the event log.',
 
     'fresh.title': 'Freshness map',
     'fresh.oldest': 'The stalest data has gone {age} without a read',
     'fresh.never': '{n} segments have never been read',
-    'fresh.caveat': 'This counts reads by this tool, so it is a lower bound: the filesystem on the drive refreshes data too, and that is invisible from the raw device.',
+    'fresh.caveat': 'This counts reads by this tool only.',
     'fresh.legend.0': 'just read', 'fresh.legend.1': 'aging normally',
     'fresh.legend.2': 'overdue', 'fresh.legend.3': 'stale / never read',
 

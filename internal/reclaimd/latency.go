@@ -131,9 +131,11 @@ func (m *LatencyMap) UnmarshalBinary(b []byte) error {
 // Coarse downsamples to one record per segment for long-term history, taking
 // the WORST sample in each bin.
 //
-// Taking the max rather than the mean is the whole point: a single 1792ms block
-// averaged with 31 healthy ones reads as 66ms, which is indistinguishable from
-// noise. The thing being stored is the outlier, so the outlier is what survives.
+// Taking the max rather than the mean is the whole point. A segment holds
+// blocksPerSegment reads -- 32 at 1 MiB blocks, 512 at 64 KiB -- and a mean
+// over that many ordinary ones drags a single near-hang down to somewhere
+// near the baseline. The thing being stored is the outlier, so the outlier is
+// what survives.
 func (m *LatencyMap) Coarse(blocksPerSegment int) []uint16 {
 	if blocksPerSegment <= 0 {
 		return nil

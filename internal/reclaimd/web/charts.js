@@ -18,9 +18,10 @@ export function readPalette() {
   };
 }
 
-/* Worst-of-bin, never mean. A single 1792 ms block averaged with 153 healthy
-   ones reads as 21.6 ms, which is indistinguishable from noise -- and that
-   outlier is the entire reason the map exists. */
+/* Worst of the bin, not the mean. A bin spans however many blocks the canvas
+   width leaves it, and a mean over that many ordinary reads pulls a single
+   near-hang down to something indistinguishable from the baseline -- while
+   that outlier is the entire reason the map exists. */
 export function downsampleMax(values, cols, baseMs) {
   const out = new Array(cols);
   const n = values.length;
