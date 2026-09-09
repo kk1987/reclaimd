@@ -23,6 +23,11 @@ looks like a dying controller, and on the drive traced here it was not:
   extreme blocks sit at `offset mod 32 MiB == 31`** — the last wordline of an
   erase block, the most fragile place on the die.
 - After rewriting a region, reading it back was **flawless at full 135 MiB/s**.
+- Writing is not immune either. A whole-drive rewrite dropped the device at
+  12.6 GiB with the same clean `USB disconnect`, this time on a `op 0x1:(WRITE)`
+  — so `refresh` has to reattach and resume rather than give up, or it leaves
+  the drive part-rewritten, which is worse than either finishing or never
+  starting.
 
 So the hardware was fine and the data on it had gone stale. Reading the whole
 drive on a schedule prevents that from ever accumulating. This daemon does that,
