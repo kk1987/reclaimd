@@ -518,6 +518,13 @@ func (s *Supervisor) RequestScan(key string) error {
 	if !ok {
 		return ErrNotFound
 	}
+	if st.Scanning {
+		// Saying no is the honest answer. Setting NextScanAt here would look
+		// like it worked and do nothing: considerDisk skips a disk that is
+		// already scanning, and persistRound overwrites the schedule when the
+		// round ends, so the request was discarded either way.
+		return ErrScanInProgress
+	}
 	if time.Now().Before(st.Schedule.SuppressUntil) {
 		return ErrScanSuppressed
 	}

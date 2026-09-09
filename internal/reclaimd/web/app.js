@@ -39,6 +39,7 @@ async function boot() {
 }
 
 function wireChrome() {
+  setConn(); // label the initial idle dot; it has no meaning until it has one
   document.querySelectorAll('[data-lang]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.lang === I.lang()));
     b.addEventListener('click', () => {
@@ -46,12 +47,15 @@ function wireChrome() {
       document.querySelectorAll('[data-lang]').forEach((o) =>
         o.setAttribute('aria-pressed', String(o.dataset.lang === I.lang())));
       I.applyStatic();
+      setConn();
+      setTheme();
       /* Re-render from the cached payloads: switching language must not cost a
          single request, which matters when the server is a router. */
       renderAll();
     });
   });
 
+  setTheme(); // three-state cycle: a label that only says "toggle" says nothing
   $('theme-btn').addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme');
     const next = cur === 'dark' ? 'light' : cur === 'light' ? null : 'dark';
@@ -63,6 +67,7 @@ function wireChrome() {
       if (next) localStorage.setItem('rcl.theme', next);
       else localStorage.removeItem('rcl.theme');
     } catch (e) {}
+    setTheme();
     scheduleRedraw();
   });
 
@@ -162,22 +167,45 @@ function renderDiskbar() {
     if (d.key === state.selected) el.setAttribute('aria-current', 'true');
     const name = `${d.identity?.vendor || ''} ${d.identity?.model || d.key}`.trim();
     const size = d.identity?.size_bytes ? I.fmtBytes(d.identity.size_bytes) : '';
+    /* "Generic Flash Disk" is what a whole class of sticks calls itself, so the
+       name alone cannot tell two of them apart. The serial can, and it is the
+       one printed on the device -- the same string `refresh` demands back as
+       its confirmation. Fall back to the key, which is unique even when the
+       stick reports no serial at all. */
+    const ident = d.identity?.serial || d.key;
     let status = d.present ? '' : I.t('disk.absent');
     if (d.scanning) status = I.t('disk.scanning');
     else if (!d.enabled) status = I.t('disk.disabled');
     else if (!d.adopted) status = I.t('disk.probation');
+
+    /* "Scan now" is only an action when a scan is not the current state. It
+       used to sit there enabled mid-round, where pressing it set next_scan_at
+       to now and nothing else happened -- an control that looks like it worked
+       and did nothing. There is no stop: a round backs off on its own terms,
+       and cutting one short mid-pread is not something a button should offer. */
+    const scanning = d.scanning;
+    const scannable = d.present && d.enabled && !scanning;
+    const scanTitle = scanning ? 'disk.scanRunning'
+      : !d.present ? 'disk.absent'
+      : !d.enabled ? 'disk.scanNeedsMaintain'
+      : 'disk.scanNow';
 
     el.innerHTML = `
       <div class="row"><span class="dot" data-grade="${d.health?.grade || 'unknown'}"></span>
         <h3 class="wrapy">${esc(name)}</h3></div>
       <div class="row mono" style="font-size:11.5px;color:var(--ink-3)">
         <span>${esc(size)}</span><span>${esc(status)}</span></div>
+      <div class="row mono" style="font-size:11.5px;color:var(--ink-3)">
+        <span title="${esc(I.t('disk.identBy'))}">${esc(ident)}</span></div>
       <div class="row"><span class="mono" style="font-size:11.5px">${
         d.next_scan_ts ? I.fmtRel(d.next_scan_ts) : '—'}</span>
         <span style="display:flex;gap:4px">
           <button type="button" class="iconbtn" data-scan="${esc(d.key)}"
-            title="${esc(I.t('disk.scanNow'))}">▶</button>
-          <button type="button" class="iconbtn" data-toggle="${esc(d.key)}">${d.enabled ? '■' : '□'}</button>
+            title="${esc(I.t(scanTitle))}" ${scannable ? '' : 'disabled'}>▶</button>
+          <button type="button" class="iconbtn" data-toggle="${esc(d.key)}"
+            role="switch" aria-checked="${d.enabled}"
+            title="${esc(I.t(d.enabled ? 'disk.excludeAction' : 'disk.maintainAction'))}"
+            >${d.enabled ? '◉' : '◎'}</button>
         </span>
       </div>`;
     el.addEventListener('click', (ev) => {
@@ -188,13 +216,16 @@ function renderDiskbar() {
     });
     el.querySelector('[data-scan]').addEventListener('click', async (ev) => {
       ev.stopPropagation();
+      if (!scannable) return;
       try {
         await api.requestScan(d.key);
         await refreshAll();
       } catch (err) {
         /* A refusal here is the suppression window doing its job, so say so
            rather than showing a bare error. */
-        toast(err.code === 'SCAN_SUPPRESSED' ? I.t('toast.suppressed') : err.message);
+        toast(err.code === 'SCAN_SUPPRESSED' ? I.t('toast.suppressed')
+          : err.code === 'SCAN_IN_PROGRESS' ? I.t('disk.scanRunning')
+          : err.message);
       }
     });
     el.querySelector('[data-toggle]').addEventListener('click', async (ev) => {
@@ -451,7 +482,28 @@ function scheduleRedraw() {
   });
 }
 
-function setConn(s) { $('conn').dataset.state = s; }
+// A coloured dot with no accessible name is a dot nobody can read. The label
+// is the only thing that says what green means, so it is set with the state
+// rather than left to a legend somewhere else on the page. The state is kept
+// so a language switch can relabel it without waiting for the next change.
+// The theme button cycles dark -> light -> follow the system, so its label has
+// to name the state it is in as well as where the next press goes. Absent the
+// attribute means "follow the system", which is the state with no name of its
+// own in the DOM.
+function setTheme() {
+  const el = $('theme-btn');
+  const label = I.t('theme.' + (document.documentElement.getAttribute('data-theme') || 'system'));
+  el.title = label;
+  el.setAttribute('aria-label', label);
+}
+
+function setConn(s) {
+  const el = $('conn');
+  if (s) el.dataset.state = s;
+  const label = I.t('conn.' + el.dataset.state);
+  el.title = label;
+  el.setAttribute('aria-label', label);
+}
 
 let toastTimer = null;
 function toast(msg) {

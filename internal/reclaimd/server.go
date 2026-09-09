@@ -362,6 +362,9 @@ func (s *Server) handleEnabled(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	err := s.sup.RequestScan(r.PathValue("key"))
 	switch {
+	case errors.Is(err, ErrScanInProgress):
+		writeError(w, http.StatusConflict, CodeScanInProgress,
+			"a round is already running on this disk")
 	case errors.Is(err, ErrScanSuppressed):
 		// Refusing here is the point. The suppression window exists because the
 		// disk just took a filesystem down with it, and impatience is not a

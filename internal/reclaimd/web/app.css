@@ -110,6 +110,9 @@ p{margin:0}
 :root[data-theme="dark"] .seg button[aria-pressed="true"]{color:#04191f}
 .iconbtn{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);
   color:var(--ink-2);cursor:pointer;font-size:14px;padding:3px 9px}
+/* A control with nothing to do says so by looking like it, not by doing
+   nothing when pressed. */
+.iconbtn:disabled{opacity:.35;cursor:default}
 .conn{width:9px;height:9px;border-radius:50%;background:var(--ink-3);display:inline-block}
 .conn[data-state="live"]{background:var(--ok)}
 .conn[data-state="down"]{background:var(--bad)}

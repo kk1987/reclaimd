@@ -5,7 +5,7 @@
 export const DICT = {
   zh: {
     'app.tagline': 'USB 闪存保持力维护',
-    'a11y.skip': '跳到正文', 'a11y.theme': '切换主题',
+    'a11y.skip': '跳到正文',
     'a11y.langGroup': '语言', 'a11y.diskbar': '磁盘列表',
     'verdict.eyebrow': '当前状态',
     'kpi.next': '下次扫描', 'kpi.last': '上次扫描',
@@ -29,6 +29,12 @@ export const DICT = {
     'ctrl.scan_interval': '扫描间隔', 'ctrl.thresholds': '慢块阈值',
     'ctrl.duty_cycle': '占空比温控', 'ctrl.dropout_cooldown': '掉线冷却',
     'ctrl.read_size': '单次读取大小',
+    'conn.live': '实时连接正常，进度是推送来的',
+    'conn.down': '事件流断了，已退回轮询',
+    'conn.idle': '标签页隐藏超过 1 分钟，已主动断流省电',
+    'theme.dark': '当前：深色。点击切浅色',
+    'theme.light': '当前：浅色。点击切回跟随系统',
+    'theme.system': '当前：跟随系统。点击切深色',
     'ctrl.formula': '公式', 'ctrl.whatif': '下一轮若',
     'whatif.clean': '仍干净 → {v}', 'whatif.slow': '有慢块 → {v}', 'whatif.dropout': '掉线 → {v}',
 
@@ -98,6 +104,11 @@ export const DICT = {
 
     'disk.absent': '未插入', 'disk.scanning': '扫描中', 'disk.disabled': '已排除',
     'disk.enable': '纳入维护', 'disk.probation': '观察中', 'disk.scanNow': '立即扫描',
+    'disk.identBy': '这支盘的序列号——同型号同名的盘靠它区分，也是 refresh 要求你回填的那一串',
+    'disk.scanRunning': '正在扫描中，没有可开始的',
+    'disk.scanNeedsMaintain': '这支盘已被排除，先纳入维护才能扫',
+    'disk.maintainAction': '当前：已排除。点击纳入维护',
+    'disk.excludeAction': '当前：纳入维护。点击排除（不会打断正在跑的一趟）',
     'foot.method': '读取走 O_DIRECT 直接访问裸设备，绕开页缓存——走缓存的话读到的是缓存，什么也刷新不了。设备通过 sysfs 里的 USB 序列号识别，掉线改名后能自动重新绑定。',
     'foot.written': '本工具至今向此盘写入 {written}',
     'toast.enabled': '已纳入维护', 'toast.disabled': '已排除',
@@ -107,7 +118,7 @@ export const DICT = {
   },
   en: {
     'app.tagline': 'USB flash retention upkeep',
-    'a11y.skip': 'Skip to content', 'a11y.theme': 'Toggle theme',
+    'a11y.skip': 'Skip to content',
     'a11y.langGroup': 'Language', 'a11y.diskbar': 'Disks',
     'verdict.eyebrow': 'Current state',
     'kpi.next': 'Next scan', 'kpi.last': 'Last scan',
@@ -131,6 +142,12 @@ export const DICT = {
     'ctrl.scan_interval': 'Scan interval', 'ctrl.thresholds': 'Slow-block thresholds',
     'ctrl.duty_cycle': 'Duty cycle', 'ctrl.dropout_cooldown': 'Dropout cooldown',
     'ctrl.read_size': 'Read size',
+    'conn.live': 'Live: progress is being pushed',
+    'conn.down': 'Event stream is down; falling back to polling',
+    'conn.idle': 'Stream closed after the tab was hidden for a minute',
+    'theme.dark': 'Dark. Click for light',
+    'theme.light': 'Light. Click to follow the system again',
+    'theme.system': 'Following the system. Click for dark',
     'ctrl.formula': 'Formula', 'ctrl.whatif': 'Next pass if',
     'whatif.clean': 'still clean → {v}', 'whatif.slow': 'slow blocks → {v}', 'whatif.dropout': 'dropout → {v}',
 
@@ -200,6 +217,11 @@ export const DICT = {
 
     'disk.absent': 'not present', 'disk.scanning': 'scanning', 'disk.disabled': 'excluded',
     'disk.enable': 'Maintain', 'disk.probation': 'on probation', 'disk.scanNow': 'Scan now',
+    'disk.identBy': 'This drive\u2019s serial \u2014 what tells two identically named sticks apart, and the string refresh asks for back',
+    'disk.scanRunning': 'Already scanning; there is nothing to start',
+    'disk.scanNeedsMaintain': 'This drive is excluded; maintain it before scanning',
+    'disk.maintainAction': 'Excluded. Click to maintain',
+    'disk.excludeAction': 'Maintained. Click to exclude (does not interrupt a running pass)',
     'foot.method': 'Reads go through O_DIRECT straight to the raw device, bypassing the page cache — a buffered read would be served from cache and refresh nothing. Devices are identified by their USB serial in sysfs, so a rename after a dropout rebinds automatically.',
     'foot.written': 'This tool has written {written} to this drive so far',
     'toast.enabled': 'Now maintained', 'toast.disabled': 'Excluded',

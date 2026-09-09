@@ -23,6 +23,7 @@ const (
 	CodeMediaError         = "MEDIA_ERROR"
 	CodeRoundAborted       = "ROUND_ABORTED"
 	CodeScanSuppressed     = "SCAN_SUPPRESSED"
+	CodeScanInProgress     = "SCAN_IN_PROGRESS"
 	CodeExternalIOBusy     = "EXTERNAL_IO_BUSY"
 	CodeStateCorrupt       = "STATE_CORRUPT"
 	CodeStateUnsupported   = "STATE_SCHEMA_UNSUPPORTED"
@@ -60,6 +61,7 @@ var (
 
 	ErrRoundAborted   = errors.New("scan round aborted")
 	ErrScanSuppressed = errors.New("scan suppressed")
+	ErrScanInProgress = errors.New("scan already running")
 	ErrDeviceMounted  = errors.New("device is mounted")
 	ErrNotFound       = errors.New("disk not found")
 )
