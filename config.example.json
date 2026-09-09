@@ -1,0 +1,36 @@
+{
+  "_comment": "Every value here is optional. The daemon derives its own thresholds and its own schedule from the disk in front of it; these exist so the derivation can be inspected and overridden, not because anything needs setting. Run reclaimd with no config at all and it works.",
+
+  "listen_addr": "127.0.0.1:8099",
+  "_listen_addr": "Loopback by default. Binding to a LAN address should be paired with ui_token: an unauthenticated status page reachable from the network ought to be a decision, not an oversight.",
+
+  "ui_token": "",
+  "_ui_token": "Bearer token required on every request when set. Only needed off loopback.",
+
+  "state_dir": "/var/lib/reclaimd",
+  "_state_dir": "MUST be persistent. On OpenWrt /var is a symlink to /tmp, so pass -state-dir /root/reclaimd there. The daemon warns loudly when it detects tmpfs, because the failure mode is silent: the schedule and the post-dropout suppression reset at every reboot.",
+
+  "adopt_after": "30m",
+  "_adopt_after": "How long a disk must stay plugged in before it is maintained. Keeps a stick you plugged in to copy one file out of the schedule.",
+
+  "block_size": 1048576,
+  "_block_size": "1 MiB because that is the max_sectors_kb reported by the drive under test: one read is then exactly one SCSI command, so the latency recorded is a single device operation. Larger reads get split by the kernel and the measurement becomes an average of several, blunting the very spikes worth detecting.",
+
+  "slow_factor": 5,
+  "danger_factor": 50,
+  "_factors": "Multipliers on the disk's own learned p50, not fixed milliseconds -- the right number differs per disk. Against a 10ms baseline they produce 50ms and 500ms, which is where the two interesting populations actually sit.",
+
+  "segment_size": 33554432,
+  "_segment_size": "32 MiB, the NAND superblock: 90.5% of extreme-latency blocks land on offset mod 32 MiB == 31, the last wordline of an erase block. Backing off in units of the physical layout is what makes a single skip sufficient.",
+
+  "reprobe_delay": "10m",
+  "_reprobe_delay": "Must outlast the controller's read cache, which dmesg reports as enabled for the drive under test. An immediate re-read would be served from that buffer and report a healed block that was never touched.",
+
+  "max_throughput_mbps": 60,
+  "_max_throughput_mbps": "Hard ceiling independent of the duty controller, so a live overlay always keeps headroom.",
+
+  "scan_interval_init": "168h",
+  "scan_interval_min": "12h",
+  "scan_interval_max": "720h",
+  "_scan_interval": "Starting point and clamps for the multiplicative policy: clean x1.5, slow x0.7, dropout x0.5. The floor stops a sick disk being scanned into the ground; the ceiling stops a healthy one aging past the retention window this tool exists to defend."
+}

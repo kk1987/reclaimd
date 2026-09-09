@@ -1,0 +1,214 @@
+package reclaimd
+
+import (
+	"math"
+	"math/rand"
+	"time"
+)
+
+// SanityEpoch guards machines with no RTC.
+//
+// The MX4300 boots with a wall clock somewhere in 1970 until NTP lands, and an
+// absolute next_scan_at compared against that clock either fires instantly and
+// forever, or never fires at all. Neither failure announces itself; the daemon
+// simply behaves wrongly until somebody goes looking.
+var SanityEpoch = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// Schedule is everything the daemon needs to decide when to scan a disk next,
+// plus the cross-round knowledge that makes round one after a reboot sensible.
+type Schedule struct {
+	Schema           int       `json:"schema"`
+	Interval         Duration  `json:"interval"`
+	NextScanAt       time.Time `json:"next_scan_at"`
+	SuppressUntil    time.Time `json:"suppress_until,omitempty"`
+	LastOutcome      string    `json:"last_outcome,omitempty"`
+	LastRoundAt      time.Time `json:"last_round_at,omitempty"`
+	LearnedBaseline  Duration  `json:"learned_baseline,omitempty"`
+	Cursor           int64     `json:"cursor"`
+	ConsecutiveClean int       `json:"consecutive_clean"`
+	RoundSeq         uint64    `json:"round_seq"`
+
+	// LastReason is the code the UI renders to explain the current interval.
+	// The daemon never produces a sentence; the browser turns this plus
+	// LastReasonParams into one, in whichever language is selected.
+	LastReason       string         `json:"last_reason,omitempty"`
+	LastReasonParams map[string]any `json:"last_reason_params,omitempty"`
+}
+
+// Reason codes for interval changes.
+const (
+	ReasonInit          = "INIT"
+	ReasonCleanBackoff  = "SCAN_CLEAN_BACKOFF"
+	ReasonSlowTighten   = "SCAN_SLOW_TIGHTEN"
+	ReasonDangerTighten = "SCAN_DANGER_TIGHTEN"
+	ReasonDropoutHalve  = "SCAN_DROPOUT_HALVE"
+	ReasonNeutral       = "SCAN_NEUTRAL_RETRY"
+	ReasonClockRebased  = "CLOCK_REBASED"
+)
+
+// NewSchedule starts a freshly adopted disk.
+//
+// The first pass is scheduled immediately rather than one interval out. A disk
+// with no history has no baseline, no map and no verdict -- everything this
+// tool says about it would be "unknown" for a week. Adoption already waited out
+// its probation, so there is nothing left to be cautious about.
+func NewSchedule(cfg Config, now time.Time) Schedule {
+	return Schedule{
+		Schema:     stateSchema,
+		Interval:   cfg.ScanIntervalInit,
+		NextScanAt: now,
+		LastReason: ReasonInit,
+		LastReasonParams: map[string]any{
+			"value_h": hours(cfg.ScanIntervalInit.Duration()),
+		},
+	}
+}
+
+// Next applies the multiplicative policy after a round.
+//
+// Multiplicative rather than additive because what it is tracking is a rate of
+// decay, not a fixed budget: a disk that needs attention twice as often needs
+// the interval halved, not shortened by a day. The clamp floor keeps a sick
+// disk from being scanned into the ground; the ceiling keeps a healthy one from
+// aging past the retention window this whole tool exists to defend.
+func (s Schedule) Next(outcome string, now time.Time, cfg Config) Schedule {
+	prev := s.Interval.Duration()
+	next := prev
+	reason := ReasonNeutral
+	params := map[string]any{"prev_h": hours(prev)}
+
+	switch outcome {
+	case OutcomeClean:
+		next = scale(prev, cfg.FactorClean)
+		s.ConsecutiveClean++
+		reason = ReasonCleanBackoff
+		params["clean_passes_n"] = s.ConsecutiveClean
+		params["factor_n"] = cfg.FactorClean
+
+	case OutcomeSlow, OutcomeMediaErrors:
+		next = scale(prev, cfg.FactorSlow)
+		s.ConsecutiveClean = 0
+		reason = ReasonSlowTighten
+		params["factor_n"] = cfg.FactorSlow
+
+	case OutcomeNearHang:
+		next = scale(prev, cfg.FactorDanger)
+		s.ConsecutiveClean = 0
+		s.SuppressUntil = now.Add(cfg.SuppressAfterNearHang.Duration())
+		reason = ReasonDangerTighten
+		params["factor_n"] = cfg.FactorDanger
+		params["suppress_h"] = hours(cfg.SuppressAfterNearHang.Duration())
+
+	case OutcomeDropout:
+		next = scale(prev, cfg.FactorDanger)
+		s.ConsecutiveClean = 0
+		s.SuppressUntil = now.Add(cfg.SuppressAfterDropout.Duration())
+		reason = ReasonDropoutHalve
+		params["factor_n"] = cfg.FactorDanger
+		params["suppress_h"] = hours(cfg.SuppressAfterDropout.Duration())
+
+	case OutcomeCancelled:
+		// Interrupted by shutdown: we learned nothing about the disk, so the
+		// interval must not move in either direction.
+		s.LastOutcome = outcome
+		s.LastRoundAt = now
+		s.NextScanAt = now.Add(time.Hour)
+		return s
+
+	case OutcomeExternal:
+		// Somebody else was using the disk all round. Also neutral: nothing is
+		// wrong, and nothing was measured.
+		s.LastOutcome = outcome
+		s.LastRoundAt = now
+		s.NextScanAt = now.Add(2 * time.Hour)
+		return s
+	}
+
+	clamped := false
+	if lo := cfg.ScanIntervalMin.Duration(); next < lo {
+		next, clamped = lo, true
+	}
+	if hi := cfg.ScanIntervalMax.Duration(); next > hi {
+		next, clamped = hi, true
+	}
+
+	s.Interval = Duration(next)
+	s.LastOutcome = outcome
+	s.LastRoundAt = now
+	s.LastReason = reason
+	params["value_h"] = hours(next)
+	params["clamped"] = clamped
+	s.LastReasonParams = params
+
+	// Jitter keeps a fleet from synchronising, but the reason it matters on one
+	// machine is different: without it a reboot loop would retrigger a scan at
+	// exactly the same moment every time.
+	s.NextScanAt = now.Add(next + time.Duration(rand.Int63n(int64(next/10)+1)))
+	return s
+}
+
+// WhatIf is what the UI shows to make the policy arguable rather than magical:
+// the three intervals the next round could produce, given today's value.
+func (s Schedule) WhatIf(cfg Config) map[string]any {
+	clampf := func(d time.Duration) float64 {
+		if d < cfg.ScanIntervalMin.Duration() {
+			d = cfg.ScanIntervalMin.Duration()
+		}
+		if d > cfg.ScanIntervalMax.Duration() {
+			d = cfg.ScanIntervalMax.Duration()
+		}
+		return hours(d)
+	}
+	prev := s.Interval.Duration()
+	return map[string]any{
+		"clean_h":   clampf(scale(prev, cfg.FactorClean)),
+		"slow_h":    clampf(scale(prev, cfg.FactorSlow)),
+		"dropout_h": clampf(scale(prev, cfg.FactorDanger)),
+	}
+}
+
+// Due reports whether a round should start now, and why not when it should not.
+func (s Schedule) Due(now time.Time) (bool, string) {
+	if now.Before(s.SuppressUntil) {
+		return false, CodeScanSuppressed
+	}
+	if now.Before(s.NextScanAt) {
+		return false, ""
+	}
+	return true, ""
+}
+
+// RebaseIfClockUnsynced repairs a schedule written against a bogus clock.
+//
+// Two symptoms are handled: an absolute timestamp far in the future (written
+// before NTP, when "now" was 1970) and a LastRoundAt in the future (the clock
+// went backwards). Both are fixed the same way -- discard the absolute value
+// and re-derive it from the interval, which is the part that is still valid.
+func (s Schedule) RebaseIfClockUnsynced(now time.Time) (Schedule, bool) {
+	if now.Before(SanityEpoch) {
+		return s, false // caller must wait for NTP; nothing sane to compute yet
+	}
+	needsRebase := s.NextScanAt.After(now.Add(s.Interval.Duration()+24*time.Hour)) ||
+		s.LastRoundAt.After(now)
+	if !needsRebase {
+		return s, false
+	}
+	s.NextScanAt = now.Add(s.Interval.Duration())
+	if s.LastRoundAt.After(now) {
+		s.LastRoundAt = time.Time{}
+	}
+	if s.SuppressUntil.After(now.Add(48 * time.Hour)) {
+		s.SuppressUntil = now.Add(24 * time.Hour)
+	}
+	s.LastReason = ReasonClockRebased
+	s.LastReasonParams = map[string]any{"value_h": hours(s.Interval.Duration())}
+	return s, true
+}
+
+func scale(d time.Duration, f float64) time.Duration {
+	return time.Duration(math.Round(float64(d) * f))
+}
+
+func hours(d time.Duration) float64 {
+	return math.Round(d.Hours()*100) / 100
+}

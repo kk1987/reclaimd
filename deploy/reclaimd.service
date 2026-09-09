@@ -1,0 +1,83 @@
+[Unit]
+Description=USB flash NAND retention refresh daemon
+Documentation=file:///usr/share/doc/reclaimd/README.md
+After=local-fs.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=300
+ExecStart=/usr/bin/reclaimd daemon
+Restart=on-failure
+RestartSec=30
+# A single pread can block for the controller's ~1.8s hang, and the SCSI layer
+# gives up only after 30s. Anything under 45 gets us SIGKILLed mid-syscall
+# during a hang -- the one moment when persisting clean state matters most.
+TimeoutStopSec=45
+UMask=0077
+
+User=reclaimd
+Group=reclaimd
+# /dev/sda is brw-rw---- root:disk, so group membership alone grants read
+# access. No capability is involved, which is why the bounding set below can be
+# emptied completely.
+SupplementaryGroups=disk
+
+# ---- device access ----
+# PrivateDevices=yes would mount a private /dev holding only null, zero, full,
+# random, urandom and the tty pair. Every block device would be invisible and
+# the daemon could not do its job at all.
+PrivateDevices=no
+DevicePolicy=closed
+# The device NAME is not stable -- sda becomes sdb after a re-enumeration -- so
+# a path here would stop matching at the worst possible moment. The group name
+# "sd" comes from /proc/devices and covers majors 8, 65-71 and 128-135.
+#
+# The permission is "r", not "rw": that makes read-only a property the kernel
+# enforces on the cgroup, rather than a promise our own O_RDONLY flag makes.
+# The refresh job, which genuinely needs to write, ships as a separate unit.
+DeviceAllow=block-sd r
+
+# ---- filesystem ----
+ProtectSystem=strict
+StateDirectory=reclaimd
+StateDirectoryMode=0700
+ProtectHome=yes
+PrivateTmp=yes
+
+# ---- kernel / process ----
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# ---- network ----
+# PrivateNetwork=yes is impossible here: unlike crosfp-seed this daemon serves a
+# status page. AF_UNIX is required for sd_notify.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+# ---- syscalls ----
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @module @reboot @swap @obsolete
+
+# systemd applies this before exec, so the scanner gets idle I/O priority
+# without us calling ioprio_set -- which would have forced @resources back into
+# the filter above and needed per-architecture syscall numbers.
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

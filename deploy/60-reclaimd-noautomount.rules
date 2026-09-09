@@ -1,0 +1,7 @@
+# Optional. The daemon is immune to a disk being mounted underneath it: it opens
+# read-only, without O_EXCL, and O_DIRECT keeps it out of the page cache
+# entirely. This rule only stops udisks2 mounting a maintenance stick on the
+# desktop and adding noise to the event log.
+#
+# Replace the serial with the one reported by: reclaimd list
+SUBSYSTEM=="block", ENV{ID_SERIAL_SHORT}=="0011223344556677", ENV{UDISKS_IGNORE}="1"

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>reclaimd</title>
+<link rel="stylesheet" href="app.css">
+<script>
+/* Resolve theme and language before the first paint. Blocking on purpose: this
+   is how a page with no build step avoids a flash of the wrong theme. */
+(function () {
+  try {
+    var th = localStorage.getItem('rcl.theme');
+    if (th === 'light' || th === 'dark') document.documentElement.setAttribute('data-theme', th);
+  } catch (e) { /* private mode */ }
+  var lg = null;
+  try { lg = localStorage.getItem('rcl.lang'); } catch (e) {}
+  if (lg !== 'zh' && lg !== 'en') {
+    lg = 'en';
+    var ls = navigator.languages || [navigator.language || 'en'];
+    for (var i = 0; i < ls.length; i++) {
+      var p = String(ls[i]).toLowerCase();
+      if (p.indexOf('zh') === 0) { lg = 'zh'; break; }
+      if (p.indexOf('en') === 0) { lg = 'en'; break; }
+    }
+  }
+  document.documentElement.lang = lg === 'zh' ? 'zh-CN' : 'en';
+  window.__RCL_LANG__ = lg;
+})();
+</script>
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="a11y.skip"></a>
+
+<header class="topbar">
+  <div class="brand"><b>reclaimd</b><span class="tag" data-i18n="app.tagline"></span></div>
+  <div class="actions">
+    <div class="seg" role="group" data-i18n-attr="aria-label:a11y.langGroup">
+      <button type="button" data-lang="zh" lang="zh-CN">中文</button>
+      <button type="button" data-lang="en" lang="en">EN</button>
+    </div>
+    <button type="button" id="theme-btn" class="iconbtn" data-i18n-attr="aria-label:a11y.theme">◐</button>
+    <span id="conn" class="conn" data-state="idle"></span>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+  <nav id="diskbar" class="diskbar" data-i18n-attr="aria-label:a11y.diskbar"></nav>
+
+  <section id="verdict" class="verdict" data-grade="unknown">
+    <p class="eyebrow" data-i18n="verdict.eyebrow"></p>
+    <h1 id="verdict-line" aria-live="polite"></h1>
+    <p id="verdict-why" class="lede"></p>
+    <div class="tiles">
+      <div class="tile"><div class="v mono" id="kpi-next">—</div><div class="k" data-i18n="kpi.next"></div></div>
+      <div class="tile"><div class="v mono" id="kpi-last">—</div><div class="k" data-i18n="kpi.last"></div></div>
+      <div class="tile"><div class="v mono" id="kpi-interval">—</div><div class="k" data-i18n="kpi.interval"></div></div>
+      <div class="tile"><div class="v mono" id="kpi-healed">—</div><div class="k" data-i18n="kpi.healed"></div></div>
+    </div>
+  </section>
+
+  <section id="live" class="card" hidden>
+    <h2 data-i18n="live.title"></h2>
+    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i id="live-fill"></i></div>
+    <dl class="livestats mono">
+      <div><dt data-i18n="live.pos"></dt><dd id="lv-pos">—</dd></div>
+      <div><dt data-i18n="live.speed"></dt><dd id="lv-speed">—</dd></div>
+      <div><dt data-i18n="live.drift"></dt><dd id="lv-drift">—</dd></div>
+      <div><dt data-i18n="live.eta"></dt><dd id="lv-eta">—</dd></div>
+      <div><dt data-i18n="live.found"></dt><dd id="lv-found">—</dd></div>
+    </dl>
+    <figure class="gauge">
+      <svg id="duty-gauge" viewBox="0 0 320 56" role="img" data-i18n-attr="aria-label:live.dutyAria"></svg>
+      <figcaption class="cap" data-i18n="live.dutyCaveat"></figcaption>
+    </figure>
+  </section>
+
+  <section id="adaptive" class="card">
+    <h2 data-i18n="adaptive.title"></h2>
+    <p class="lede" data-i18n="adaptive.lede"></p>
+    <div id="ctrl-rows" class="ruled"></div>
+  </section>
+
+  <section id="map" class="card">
+    <h2 data-i18n="map.title"></h2>
+    <div class="maphead">
+      <span class="lbl" id="map-label">—</span>
+      <span class="stat mono" id="map-stat"></span>
+    </div>
+    <canvas id="map-canvas" class="strip"></canvas>
+    <div class="axis mono" id="map-axis"></div>
+    <div class="legend" id="map-legend"></div>
+    <p class="cap" data-i18n="map.note"></p>
+  </section>
+
+  <section id="stack" class="card" hidden>
+    <h2 data-i18n="stack.title"></h2>
+    <p class="lede" data-i18n="stack.lede"></p>
+    <div class="stackgrid">
+      <div class="stacklabels mono" id="stack-labels"></div>
+      <canvas id="stack-canvas"></canvas>
+      <div class="stackstats mono" id="stack-stats"></div>
+    </div>
+  </section>
+
+  <section id="trends" class="card" hidden>
+    <h2 data-i18n="trends.title"></h2>
+    <svg id="trend-svg" viewBox="0 0 720 260" role="img" data-i18n-attr="aria-label:trends.aria"></svg>
+    <p class="cap" data-i18n="trends.note"></p>
+  </section>
+
+  <section id="events" class="card">
+    <h2 data-i18n="events.title"></h2>
+    <ol id="event-list" class="log"></ol>
+  </section>
+</main>
+
+<footer>
+  <p class="cap" data-i18n="foot.method"></p>
+  <p class="cap mono" id="foot-stats"></p>
+</footer>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
