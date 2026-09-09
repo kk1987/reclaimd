@@ -88,6 +88,7 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 	if opts.End <= 0 || opts.End > p.Identity.SizeBytes {
 		opts.End = p.Identity.SizeBytes
 	}
+	cfg = cfg.ForDisk(p.Identity)
 	blockSize := int64(cfg.BlockSize)
 	start := alignDown(opts.Start, blockSize)
 	end := alignDown(opts.End, blockSize)

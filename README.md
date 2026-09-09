@@ -70,6 +70,7 @@ that produced it:
 
 | | how it decides |
 |---|---|
+| **Read size** | the largest power of two that still fits in one SCSI command, from the disk's own `max_sectors_kb`, capped at 1 MiB. The forensics drive takes 1 MiB; a USB 2.0 stick behind `usb-storage` reports a 120 KiB limit and gets 64 KiB |
 | **Scan interval** | multiplicative: clean ×1.5, slow ×0.7, dropout ×0.5, clamped to 12 h–30 d |
 | **Slow / danger thresholds** | 5× and 50× the disk's own learned p50. On the drive under test that lands on 50 ms and 500 ms — the same numbers picked by hand during the forensics |
 | **Duty cycle** | rest scales with how far the rolling latency has drifted from the drive's *settled* latency, taken once the pass has warmed up. The read latency is the thermometer; no sensor needed |
@@ -135,12 +136,23 @@ reclaimd refresh -disk=<key> -confirm=<serial> -range=9000000000:11000000000
 
 ### OpenWrt
 
+Copy the binary and the init script over. Busybox has no `install`, and stock
+dropbear ships no sftp subsystem, so `scp` works only where `openssh-sftp-server`
+was added; a pipe works everywhere:
+
 ```sh
-install -m0755 out/reclaimd-linux-arm64 /usr/bin/reclaimd
-install -m0755 deploy/reclaimd.init /etc/init.d/reclaimd
-/etc/init.d/reclaimd enable && /etc/init.d/reclaimd start
+cat out/reclaimd-linux-arm64 | ssh root@<router> 'cat > /tmp/reclaimd.bin'
+cat deploy/reclaimd.init     | ssh root@<router> 'cat > /tmp/reclaimd.init'
+ssh root@<router> '
+  cp /tmp/reclaimd.bin  /usr/bin/reclaimd   && chmod 0755 /usr/bin/reclaimd
+  cp /tmp/reclaimd.init /etc/init.d/reclaimd && chmod 0755 /etc/init.d/reclaimd
+  /etc/init.d/reclaimd enable && /etc/init.d/reclaimd start'
 logread -e reclaimd
 ```
+
+There is nothing to configure. The daemon finds the disk, derives its read size
+from it and schedules itself; `/etc/reclaimd/config.json` is read if it exists
+and is not expected to.
 
 State goes to `/root/reclaimd`, **not** `/var/lib`: on OpenWrt `/var` is a
 symlink to `/tmp`, so state there is lost at every reboot along with the

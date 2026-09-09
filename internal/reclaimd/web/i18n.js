@@ -28,6 +28,7 @@ export const DICT = {
     'adaptive.lede': '下面每个数都是这支盘自己推出来的，不是人定的。展开可以看到公式、输入和下一轮会往哪走。',
     'ctrl.scan_interval': '扫描间隔', 'ctrl.thresholds': '慢块阈值',
     'ctrl.duty_cycle': '占空比温控', 'ctrl.dropout_cooldown': '掉线冷却',
+    'ctrl.read_size': '单次读取大小',
     'ctrl.formula': '公式', 'ctrl.whatif': '下一轮若',
     'whatif.clean': '仍干净 → {v}', 'whatif.slow': '有慢块 → {v}', 'whatif.dropout': '掉线 → {v}',
 
@@ -38,6 +39,8 @@ export const DICT = {
     'reason.SCAN_DROPOUT_HALVE': '发生掉线，间隔 ×{factor} 并冷却 {suppress}。',
     'reason.SCAN_NEUTRAL_RETRY': '这一轮没测到什么，间隔不动。',
     'reason.CLOCK_REBASED': '时钟同步后重算了下次时间。',
+    'reason.ONE_SCSI_COMMAND': '这支盘的 max_sectors_kb 是 {max_sectors_kb} KiB，取不超过它的最大 2 的幂，一次读恰好是一条 SCSI 命令。',
+    'reason.SET_IN_CONFIG': '配置里写死的值；这支盘的 max_sectors_kb 是 {max_sectors_kb} KiB。',
     'reason.LEARNED_FROM_DISK': '基线 {base} → 慢 {slow} / 危险 {danger}。这两个数是这支盘自己的 p50 乘出来的。',
     'reason.DRIFT_RUNNING': '漂移 {drift}×（阈值 {threshold}×），全速。',
     'reason.DRIFT_RESTING': '漂移 {drift}×（阈值 {threshold}×），正在歇。',
@@ -126,6 +129,7 @@ export const DICT = {
     'adaptive.lede': 'Every number here was derived from this drive, not chosen by hand. Expand a row for the formula, the inputs, and where the next pass would take it.',
     'ctrl.scan_interval': 'Scan interval', 'ctrl.thresholds': 'Slow-block thresholds',
     'ctrl.duty_cycle': 'Duty cycle', 'ctrl.dropout_cooldown': 'Dropout cooldown',
+    'ctrl.read_size': 'Read size',
     'ctrl.formula': 'Formula', 'ctrl.whatif': 'Next pass if',
     'whatif.clean': 'still clean → {v}', 'whatif.slow': 'slow blocks → {v}', 'whatif.dropout': 'dropout → {v}',
 
@@ -136,6 +140,8 @@ export const DICT = {
     'reason.SCAN_DROPOUT_HALVE': 'Dropout; interval ×{factor} and a {suppress} cooldown.',
     'reason.SCAN_NEUTRAL_RETRY': 'Nothing was measured this pass, so the interval stays put.',
     'reason.CLOCK_REBASED': 'Recomputed after the clock was corrected.',
+    'reason.ONE_SCSI_COMMAND': 'This drive’s max_sectors_kb is {max_sectors_kb} KiB; the largest power of two that fits makes one read exactly one SCSI command.',
+    'reason.SET_IN_CONFIG': 'Set by hand in the config; this drive’s max_sectors_kb is {max_sectors_kb} KiB.',
     'reason.LEARNED_FROM_DISK': 'Baseline {base} → slow {slow} / danger {danger}, both multiples of this drive’s own p50.',
     'reason.DRIFT_RUNNING': 'Drift {drift}× (threshold {threshold}×), running.',
     'reason.DRIFT_RESTING': 'Drift {drift}× (threshold {threshold}×), resting.',

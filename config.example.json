@@ -13,8 +13,8 @@
   "adopt_after": "30m",
   "_adopt_after": "How long a disk must stay plugged in before it is maintained. Keeps a stick you plugged in to copy one file out of the schedule.",
 
-  "block_size": 1048576,
-  "_block_size": "1 MiB because that is the max_sectors_kb reported by the drive under test: one read is then exactly one SCSI command, so the latency recorded is a single device operation. Larger reads get split by the kernel and the measurement becomes an average of several, blunting the very spikes worth detecting.",
+  "block_size": 0,
+  "_block_size": "0 means derive it per disk: the largest power of two that still fits in one SCSI command, from that disk's own max_sectors_kb, capped at 1 MiB. A read the kernel has to split is timed as the sum of several commands, which lifts the disk's p50 by the same factor and takes the thresholds derived from it along. The drive in the forensics reports 1 MiB; a USB 2.0 stick behind usb-storage reports 120 KiB and gets 64 KiB blocks. Set it only to reproduce a past measurement -- it must be a power of two between 4096 and 1048576.",
 
   "slow_factor": 5,
   "danger_factor": 50,

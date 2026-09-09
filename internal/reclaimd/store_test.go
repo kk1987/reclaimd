@@ -288,11 +288,15 @@ func atomicWriteChild() {
 	}
 }
 
+// mustConfig returns the defaults resolved against the drive from the
+// forensics, whose max_sectors_kb is 1024. Block size is derived per disk in
+// production, so a test that wants to talk about blocks has to say which disk
+// it means; every fake disk in this package models that one.
 func mustConfig(t *testing.T) Config {
 	t.Helper()
 	c, err := LoadConfigFromFile("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c
+	return c.ForDisk(DiskIdentity{MaxSectorsKB: 1024})
 }

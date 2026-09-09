@@ -159,7 +159,8 @@ func baselineDrift(rounds []RoundSummary) (drift, bestMs, nowMs float64) {
 // controllersFor renders every adaptive parameter as a row the user can argue
 // with: the value, the rule that set it, the formula, and -- the part that
 // makes the policy legible -- what the next round would turn it into.
-func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, live *LiveProgress) []Controller {
+func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskIdentity,
+	live *LiveProgress) []Controller {
 	out := []Controller{{
 		ID:      "scan_interval",
 		Value:   round2(sched.Interval.Duration().Hours()),
@@ -173,6 +174,26 @@ func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, live *Liv
 		},
 		WhatIf: sched.WhatIf(cfg),
 	}}
+
+	// A read larger than the transfer limit is timed as several commands, so
+	// this row exists to show that it is not -- and to say so plainly when a
+	// hand-set block_size has made it one.
+	readSize := cfg.BlockSizeFor(id)
+	readReason := "ONE_SCSI_COMMAND"
+	if cfg.BlockSize > 0 {
+		readReason = "SET_IN_CONFIG"
+	}
+	out = append(out, Controller{
+		ID:      "read_size",
+		Value:   float64(readSize) / 1024,
+		Unit:    "KiB",
+		Reason:  readReason,
+		Formula: "largest power of two <= max_sectors_kb, capped at 1 MiB",
+		Params: map[string]any{
+			"max_sectors_kb": id.MaxSectorsKB,
+			"split":          id.MaxSectorsKB > 0 && readSize > id.MaxSectorsKB*1024,
+		},
+	})
 
 	if len(rounds) > 0 {
 		last := rounds[len(rounds)-1]

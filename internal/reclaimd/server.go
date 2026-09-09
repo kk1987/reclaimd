@@ -250,7 +250,7 @@ func (s *Server) views(detail bool) []DiskView {
 			v.TotalHealed += r.Healed
 		}
 		if detail {
-			v.Controllers = controllersFor(sched, rounds, s.cfg, v.Live)
+			v.Controllers = controllersFor(sched, rounds, s.cfg, v.Identity, v.Live)
 			v.Rounds = rounds
 		}
 		out = append(out, v)

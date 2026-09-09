@@ -238,7 +238,7 @@ func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput)
 		s.notifyChange(st.Key, "SCAN_END")
 	}()
 
-	dev, err := OpenDevice(in.Presence, s.cfg.BlockSize, s.roots)
+	dev, err := OpenDevice(in.Presence, s.cfg.BlockSizeFor(in.Presence.Identity), s.roots)
 	if err != nil {
 		s.logger.Error("open device", "disk", st.Key, "error", err)
 		s.setErr(st, err)
@@ -284,7 +284,7 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 	key := st.Key
 	now := time.Now()
 
-	if err := s.store.SaveProfile(key, res.Latency, s.cfg.BlocksPerSegment(),
+	if err := s.store.SaveProfile(key, res.Latency, res.blocksPerSegment(s.cfg),
 		s.cfg.KeepFullProfiles, s.cfg.KeepCoarseProfiles); err != nil {
 		s.logger.Error("save profile", "disk", key, "error", err)
 	}
@@ -371,7 +371,7 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 // by whatever filesystem lives on the disk refresh data too, and they are
 // invisible from down here at the raw device.
 func (s *Supervisor) updateFreshness(key string, res RoundResult) {
-	perSeg := s.cfg.BlocksPerSegment()
+	perSeg := res.blocksPerSegment(s.cfg)
 	if perSeg <= 0 || res.Latency == nil {
 		return
 	}
@@ -449,7 +449,7 @@ func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (Roun
 	s.disks[key] = st
 	s.mu.Unlock()
 
-	dev, err := OpenDevice(p, s.cfg.BlockSize, s.roots)
+	dev, err := OpenDevice(p, s.cfg.BlockSizeFor(p.Identity), s.roots)
 	if err != nil {
 		return RoundSummary{}, err
 	}

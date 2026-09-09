@@ -116,6 +116,17 @@ type RoundResult struct {
 	Baseline Baseline
 }
 
+// blocksPerSegment reads the segment geometry back off the round that was
+// actually run, rather than off the config. The config no longer knows the
+// block size on its own -- that was resolved from the disk -- and the latency
+// map carries the value the pass was measured with.
+func (r RoundResult) blocksPerSegment(cfg Config) int {
+	if r.Latency == nil || r.Latency.BlockSize <= 0 {
+		return 0
+	}
+	return int(cfg.SegmentSize / int64(r.Latency.BlockSize))
+}
+
 // Round performs one pass with early backoff.
 //
 // The strategy rests on one finding: a slow read that COMPLETED has already
@@ -125,8 +136,12 @@ type RoundResult struct {
 // the correct move on seeing a slow block is to leave, not to press on. The
 // backoff costs nothing and buys the whole margin.
 func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error) {
-	cfg := s.cfg
 	dev := in.Dev
+	// The device is the single source of truth for the read size: it was
+	// opened with the size resolved for this disk, so taking it from the
+	// config again would let the two drift apart.
+	cfg := s.cfg
+	cfg.BlockSize = dev.BlockSize()
 	blockSize := int64(cfg.BlockSize)
 	blockCount := dev.Size() / blockSize
 	perSeg := cfg.BlocksPerSegment()
@@ -414,7 +429,7 @@ func (s *Scanner) onDropout(ctx context.Context, in RoundInput, seg int, off int
 	// Confirming the device came back is worth the wait even though the round
 	// is over: on a mounted overlay, "did the backing store return" is the
 	// question that actually matters.
-	p, err := WaitForReattach(ctx, s.roots, in.Presence.Identity, s.cfg.BlockSize,
+	p, err := WaitForReattach(ctx, s.roots, in.Presence.Identity, int(blockSize),
 		s.cfg.ReattachTimeout.Duration())
 	if err != nil {
 		s.logger.Error("device did not come back", "disk", in.Key, "error", err)

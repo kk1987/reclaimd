@@ -75,11 +75,13 @@ type Config struct {
 
 	// ---- read geometry ----
 
-	// BlockSize is 1 MiB because that is the max_sectors_kb reported by the
-	// drive under test: one read is then exactly one SCSI command, so the
-	// latency recorded is a single device operation. Any larger and the
-	// kernel splits the request, which averages the very spikes we are
-	// trying to detect.
+	// BlockSize is zero by default, meaning it is derived per disk from that
+	// disk's max_sectors_kb -- see BlockSizeFor. One read must be exactly one
+	// SCSI command, or the latency recorded is the sum of several and the
+	// spikes this tool exists to detect get measured against a baseline that
+	// has grown by the same factor. The drive in the forensics reports 1 MiB;
+	// a USB 2.0 stick behind usb-storage reports 120 KiB, and hardcoding
+	// either one is wrong on the other.
 	BlockSize int `json:"block_size"`
 
 	// WarmupDiscard blocks are read and thrown away before timing starts. A
@@ -212,9 +214,8 @@ func (c *Config) withDefaults() {
 	if c.MinUptime == 0 {
 		c.MinUptime = Duration(15 * time.Minute)
 	}
-	if c.BlockSize == 0 {
-		c.BlockSize = 1 << 20
-	}
+	// BlockSize deliberately keeps its zero: it is resolved per disk, once the
+	// disk is in front of us. See BlockSizeFor.
 	if c.WarmupDiscard == 0 {
 		c.WarmupDiscard = 8
 	}
@@ -407,11 +408,23 @@ func LoadConfigFromFile(path string) (Config, error) {
 }
 
 func (c Config) validate() error {
-	if c.BlockSize <= 0 || c.BlockSize%4096 != 0 {
-		return fmt.Errorf("block_size must be a positive multiple of 4096, got %d", c.BlockSize)
-	}
-	if c.SegmentSize <= 0 || c.SegmentSize%int64(c.BlockSize) != 0 {
-		return fmt.Errorf("segment_size must be a positive multiple of block_size")
+	// Zero means derive. A set value has to be a power of two, not merely a
+	// multiple of 4096: the latency map encodes the block size as a shift, so
+	// anything else is rejected only at the end of the first round -- after a
+	// full pass has already been spent measuring with it.
+	if c.BlockSize != 0 {
+		if c.BlockSize < 4096 || c.BlockSize > MaxBlockSize || c.BlockSize&(c.BlockSize-1) != 0 {
+			return fmt.Errorf("block_size must be a power of two between 4096 and %d, got %d",
+				MaxBlockSize, c.BlockSize)
+		}
+		if c.SegmentSize <= 0 || c.SegmentSize%int64(c.BlockSize) != 0 {
+			return fmt.Errorf("segment_size must be a positive multiple of block_size")
+		}
+	} else if c.SegmentSize <= 0 || c.SegmentSize%MaxBlockSize != 0 {
+		// With block_size derived, the value is not known yet. Requiring the
+		// segment to be a multiple of the largest size it can take makes it
+		// divisible by every size it can take.
+		return fmt.Errorf("segment_size must be a positive multiple of %d", MaxBlockSize)
 	}
 	if c.ScanIntervalMin >= c.ScanIntervalMax {
 		return fmt.Errorf("scan_interval_min must be below scan_interval_max")
@@ -419,6 +432,55 @@ func (c Config) validate() error {
 	return nil
 }
 
+// MaxBlockSize caps the derived read size. It is the point past which a larger
+// read buys nothing: it is already several times any transfer limit seen in the
+// wild, and every doubling beyond it halves the resolution of the latency map
+// for no gain in measurement fidelity.
+const MaxBlockSize = 1 << 20
+
+// BlockSizeFor is the read size to use on one particular disk.
+//
+// The kernel splits any read larger than max_sectors_kb into several SCSI
+// commands, so a block above that limit is timed as the sum of a handful of
+// device operations. That does not hide a spike -- the sum still contains it --
+// but it raises the disk's own p50 by the same factor, and the thresholds are
+// multiples of that p50. On a stick whose limit is 120 KiB, a 1 MiB block puts
+// the slow line at ~150ms instead of the floor of 50ms, and the 50ms population
+// that the whole tool was written to catch disappears under the threshold.
+//
+// So: the largest power of two that still fits in one command. Power of two
+// because the latency map stores the size as a shift, and the next size down
+// costs at most a factor of two in throughput per command -- cheap next to
+// measuring the wrong thing.
+func (c Config) BlockSizeFor(id DiskIdentity) int {
+	if c.BlockSize > 0 {
+		return c.BlockSize
+	}
+	// An unknown limit is not a reason to read small; sysfs virtually always
+	// has it, and the old fixed 1 MiB is the right guess when it does not.
+	if id.MaxSectorsKB <= 0 {
+		return MaxBlockSize
+	}
+	size := 4096
+	for size*2 <= id.MaxSectorsKB*1024 && size*2 <= MaxBlockSize {
+		size *= 2
+	}
+	return size
+}
+
+// ForDisk resolves everything that depends on the disk in front of us, so the
+// rest of a round can go on reading plain config fields.
+func (c Config) ForDisk(id DiskIdentity) Config {
+	c.BlockSize = c.BlockSizeFor(id)
+	return c
+}
+
 // BlocksPerSegment is used everywhere the scanner reasons about the physical
-// layout; deriving it once keeps the mod-32 structure analysis honest.
-func (c Config) BlocksPerSegment() int { return int(c.SegmentSize / int64(c.BlockSize)) }
+// layout; deriving it once keeps the mod-32 structure analysis honest. It is
+// only meaningful on a config that has been through ForDisk.
+func (c Config) BlocksPerSegment() int {
+	if c.BlockSize <= 0 {
+		return 0
+	}
+	return int(c.SegmentSize / int64(c.BlockSize))
+}

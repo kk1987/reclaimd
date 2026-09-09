@@ -23,6 +23,8 @@ type fakeDisk struct {
 	drops    map[int64]bool          // block index -> hangs and drops the bus
 	healed   map[int64]bool
 
+	reported int // BlockSize() override; 0 means report blockSize honestly
+
 	reads    int
 	dropouts int
 	// present models the device leaving the bus: once it drops, every
@@ -41,8 +43,18 @@ func newFakeDisk(blocks int64, blockSize int, base time.Duration) *fakeDisk {
 	}
 }
 
-func (f *fakeDisk) Size() int64    { return f.size }
-func (f *fakeDisk) BlockSize() int { return f.blockSize }
+func (f *fakeDisk) Size() int64 { return f.size }
+
+// BlockSize reports what the round will read with. reported exists so a test
+// can hand back a size the fake cannot actually satisfy, which is the only way
+// left to reach the misaligned path now that a round takes its geometry from
+// the device instead of the config.
+func (f *fakeDisk) BlockSize() int {
+	if f.reported != 0 {
+		return f.reported
+	}
+	return f.blockSize
+}
 
 func (f *fakeDisk) ReadBlock(off int64) (time.Duration, error) {
 	if off%int64(f.blockSize) != 0 {
@@ -307,10 +319,10 @@ func TestAlignmentErrorIsFatal(t *testing.T) {
 	disk := newFakeDisk(1024, cfg.BlockSize, 10*time.Millisecond)
 	sc, _ := newTestScanner(t, cfg)
 
-	// A block size the fake cannot satisfy forces the misaligned path.
-	bad := cfg
-	bad.BlockSize = cfg.BlockSize + 4096
-	sc.cfg = bad
+	// A block size the fake cannot satisfy forces the misaligned path. It has
+	// to come from the device: the round reads with the size the device was
+	// opened at, so a config that disagrees can no longer be the cause.
+	disk.reported = cfg.BlockSize + 4096
 
 	_, err := sc.Round(context.Background(), RoundInput{
 		Key: "fake", Dev: disk, Schedule: NewSchedule(cfg, time.Now())})
