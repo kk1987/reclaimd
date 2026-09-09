@@ -70,6 +70,12 @@
 }
 
 *{box-sizing:border-box}
+/* The UA stylesheet's [hidden]{display:none} loses to ANY author rule that sets
+   display, and .card sets display:flex. Without this every section the script
+   hides -- the live panel, the waterfall, trends -- renders anyway as an empty
+   heading. Author styles beat the UA sheet regardless of specificity, so this
+   has to be stated here. */
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
   font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
 :lang(zh) body{line-height:1.75;letter-spacing:.01em}
