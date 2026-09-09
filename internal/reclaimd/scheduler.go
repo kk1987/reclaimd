@@ -43,6 +43,7 @@ const (
 	ReasonDangerTighten = "SCAN_DANGER_TIGHTEN"
 	ReasonDropoutHalve  = "SCAN_DROPOUT_HALVE"
 	ReasonNeutral       = "SCAN_NEUTRAL_RETRY"
+	ReasonResumePartial = "SCAN_RESUME_PARTIAL"
 	ReasonClockRebased  = "CLOCK_REBASED"
 )
 
@@ -71,7 +72,8 @@ func NewSchedule(cfg Config, now time.Time) Schedule {
 // the interval halved, not shortened by a day. The clamp floor keeps a sick
 // disk from being scanned into the ground; the ceiling keeps a healthy one from
 // aging past the retention window this whole tool exists to defend.
-func (s Schedule) Next(outcome string, now time.Time, cfg Config) Schedule {
+func (s Schedule) Next(sum RoundSummary, now time.Time, cfg Config) Schedule {
+	outcome := sum.Outcome
 	prev := s.Interval.Duration()
 	next := prev
 	reason := ReasonNeutral
@@ -144,7 +146,38 @@ func (s Schedule) Next(outcome string, now time.Time, cfg Config) Schedule {
 	// machine is different: without it a reboot loop would retrigger a scan at
 	// exactly the same moment every time.
 	s.NextScanAt = now.Add(next + time.Duration(rand.Int63n(int64(next/10)+1)))
+
+	// The interval is a full-pass cadence: how long a whole disk may go
+	// unread. A round that stopped on its circuit breaker did not deliver a
+	// full pass -- the one that prompted this covered 8.6% and left a cursor
+	// mid-disk -- and waiting a full interval to resume applies a whole-disk
+	// answer to a fraction of a disk. Come back at the floor instead, which is
+	// the documented answer to "how often is too often for a sick disk", and
+	// never before the suppression window that the same round just set.
+	if !sum.Completed && outcome != OutcomeClean && outcome != OutcomeMediaErrors {
+		resume := now.Add(cfg.ScanIntervalMin.Duration())
+		if resume.Before(s.SuppressUntil) {
+			resume = s.SuppressUntil
+		}
+		if resume.Before(s.NextScanAt) {
+			s.NextScanAt = resume
+			s.LastReason = ReasonResumePartial
+			params["resume_h"] = hours(resume.Sub(now))
+			params["covered_pct"] = coveredPct(sum)
+			s.LastReasonParams = params
+		}
+	}
 	return s
+}
+
+// coveredPct is how much of the disk the round actually read, for the line the
+// UI shows next to a resume. Rounded to one place: this is an explanation, not
+// a measurement anything depends on.
+func coveredPct(sum RoundSummary) float64 {
+	if sum.BlocksTotal <= 0 {
+		return 0
+	}
+	return math.Round(float64(sum.BlocksRead)/float64(sum.BlocksTotal)*1000) / 10
 }
 
 // WhatIf is what the UI shows to make the policy arguable rather than magical:

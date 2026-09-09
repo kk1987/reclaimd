@@ -216,8 +216,14 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 
 	order := segmentOrder(segCount, in.Deferred, in.Schedule.Cursor, blockSize, perSeg)
 
+	// segIdx survives the loop so the round knows whether it finished the
+	// ground it set out to cover. Every early exit here is a decision to stop,
+	// and a round that stopped is not the same observation as one that swept
+	// the disk -- the scheduler has to be able to tell them apart.
+	segIdx := 0
 sweep:
-	for _, seg := range order {
+	for ; segIdx < len(order); segIdx++ {
+		seg := order[segIdx]
 		if err := ctx.Err(); err != nil {
 			outcome, fatal = OutcomeCancelled, err
 			break
@@ -346,6 +352,7 @@ sweep:
 		outcome = OutcomeMediaErrors
 	}
 
+	res.Summary.Completed = segIdx == len(order)
 	res.Summary.BlocksRead = blocksRead
 	res.Summary.SlowBlocks = slow
 	res.Summary.DangerBlocks = danger
@@ -469,14 +476,46 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 	if len(entries) == 0 {
 		return 0, 0
 	}
+	if len(entries) > s.cfg.ReprobeMax {
+		// Probe the ones that stopped the round, not a second sweep's worth.
+		entries = entries[:s.cfg.ReprobeMax]
+	}
+
+	// Wait the delay out instead of stepping over it.
+	//
+	// This used to skip any entry still inside its window and leave it "for
+	// next round", which quietly guaranteed the opposite of what it says: a
+	// round that ends on the circuit breaker is short by construction -- the
+	// one that prompted this fix ran for 3m18s against a 10 minute delay -- so
+	// every entry was always still waiting, healed and still-slow were always
+	// zero, and the next round is an interval away and resumes at a cursor
+	// past these offsets anyway. The disks that trip the breaker fastest were
+	// the ones the healing measurement never ran on.
+	//
+	// Waiting costs nothing that matters: it is an idle sleep on an open
+	// read-only descriptor, and the round is already over in every sense but
+	// the bookkeeping.
+	wait := time.Duration(0)
+	for _, e := range entries {
+		if d := time.Until(e.DeferUntil); d > wait {
+			wait = d
+		}
+	}
+	if wait > s.cfg.ReprobeDelay.Duration() {
+		wait = s.cfg.ReprobeDelay.Duration() // defensive: a clock jump, not a plan
+	}
+	if wait > 0 {
+		if err := sleepCtx(ctx, wait); err != nil {
+			return 0, 0
+		}
+	}
+
+	// The budget covers the probing, not the waiting.
 	deadline := time.Now().Add(s.cfg.ReprobeBudget.Duration())
 	n := 0
 	for _, e := range entries {
 		if n >= s.cfg.ReprobeMax || time.Now().After(deadline) {
 			break
-		}
-		if time.Now().Before(e.DeferUntil) {
-			continue // not yet out of the read cache; leave it for next round
 		}
 		n++
 

@@ -141,7 +141,13 @@ type Config struct {
 	// reclaim to run.
 	ReprobeDelay  Duration `json:"reprobe_delay"`
 	ReprobeBudget Duration `json:"reprobe_budget"`
-	ReprobeMax    int      `json:"reprobe_max_n"`
+
+	// ReprobeMax caps the re-probe at a measurement rather than a second
+	// sweep. Each entry costs five reads -- the block and two either side --
+	// and these are issued at the end of a round that just chose to back off,
+	// so the cap wants to be small enough that the check is never itself the
+	// thing that pushes the disk over.
+	ReprobeMax int `json:"reprobe_max_n"`
 
 	// ReprobeSpacing keeps the re-probe phase from becoming a burst of its own.
 	// The blocks being revisited are the ones that just misbehaved, so they are
@@ -268,7 +274,7 @@ func (c *Config) withDefaults() {
 		c.ReprobeBudget = Duration(5 * time.Minute)
 	}
 	if c.ReprobeMax == 0 {
-		c.ReprobeMax = 64
+		c.ReprobeMax = 16
 	}
 	if c.ReprobeSpacing == 0 {
 		c.ReprobeSpacing = Duration(500 * time.Millisecond)

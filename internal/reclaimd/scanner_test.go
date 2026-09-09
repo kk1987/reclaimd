@@ -171,7 +171,7 @@ func TestConvergenceAcrossRounds(t *testing.T) {
 		slowPerRound = append(slowPerRound, res.Summary.SlowBlocks+res.Summary.DangerBlocks)
 
 		owed = res.Deferred
-		sched = sched.Next(res.Summary.Outcome, time.Now(), cfg)
+		sched = sched.Next(res.Summary, time.Now(), cfg)
 		sched.Cursor = res.Cursor
 		sched.RoundSeq = res.Summary.Seq
 		sched.LearnedBaseline = Duration(BlendLearned(
@@ -221,7 +221,7 @@ func TestDeferredSegmentsAreEventuallyDrained(t *testing.T) {
 			t.Fatal(err)
 		}
 		owed = res.Deferred
-		sched = sched.Next(res.Summary.Outcome, time.Now(), cfg)
+		sched = sched.Next(res.Summary, time.Now(), cfg)
 		sched.Cursor = res.Cursor
 		sched.RoundSeq = res.Summary.Seq
 	}
@@ -278,7 +278,7 @@ func TestDropoutStopsRoundAndPersistsSuppression(t *testing.T) {
 	}
 
 	disk.reattach()
-	sched = sched.Next(res.Summary.Outcome, time.Now(), cfg)
+	sched = sched.Next(res.Summary, time.Now(), cfg)
 	if ok, why := sched.Due(time.Now()); ok || why != CodeScanSuppressed {
 		t.Errorf("a disk that just dropped should be suppressed, got due=%v why=%q", ok, why)
 	}
@@ -369,5 +369,68 @@ func TestNextCursorStaysSegmentAligned(t *testing.T) {
 	}
 	if got <= 12345*blockSize {
 		t.Errorf("cursor %d does not clear the offending segment", got)
+	}
+}
+
+// The healing measurement must survive a round that ends early.
+//
+// A round that trips the danger circuit breaker is short by construction: the
+// one this reproduces ran for 3m18s against a 10 minute re-probe delay. The
+// re-probe used to step over every entry still inside its window and leave it
+// "for next round", so healed and still-slow came back zero on exactly the
+// disks the number exists to describe -- and the next round is an interval
+// away, resuming from a cursor well past these offsets.
+func TestShortRoundStillMeasuresHealing(t *testing.T) {
+	cfg := fastConfig(t)
+	// Non-zero, and longer than this round can possibly take.
+	cfg.ReprobeDelay = Duration(40 * time.Millisecond)
+
+	disk := newFakeDisk(4096, cfg.BlockSize, 10*time.Millisecond)
+	// Three near-hangs is MaxDangerPerRound, so the sweep stops almost at once.
+	for _, idx := range []int64{100, 200, 300} {
+		disk.degraded[idx] = 700 * time.Millisecond
+	}
+	sc, _ := newTestScanner(t, cfg)
+
+	res, err := sc.Round(context.Background(), RoundInput{
+		Key: "fake", Dev: disk, Schedule: NewSchedule(cfg, time.Now())})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.Summary.Outcome != OutcomeNearHang {
+		t.Fatalf("outcome = %q, want %q", res.Summary.Outcome, OutcomeNearHang)
+	}
+	if res.Summary.Completed {
+		t.Error("a round that stopped on the breaker reported a completed sweep")
+	}
+	if res.Summary.Healed == 0 {
+		t.Errorf("healed = 0 after a short round; the re-probe skipped its own delay "+
+			"(danger=%d, deferred=%d)", res.Summary.DangerBlocks, res.Summary.Deferred)
+	}
+	if res.Summary.StillSlow != 0 {
+		t.Errorf("still slow = %d, want 0: the fake heals on the first read",
+			res.Summary.StillSlow)
+	}
+}
+
+// A pass that reaches the end of its segment list says so, which is what lets
+// the scheduler tell "swept the disk and found slow blocks" apart from "quit
+// after 8%".
+func TestCleanRoundReportsCompleted(t *testing.T) {
+	cfg := fastConfig(t)
+	disk := newFakeDisk(512, cfg.BlockSize, 10*time.Millisecond)
+	sc, _ := newTestScanner(t, cfg)
+
+	res, err := sc.Round(context.Background(), RoundInput{
+		Key: "fake", Dev: disk, Schedule: NewSchedule(cfg, time.Now())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.Outcome != OutcomeClean {
+		t.Fatalf("outcome = %q, want %q", res.Summary.Outcome, OutcomeClean)
+	}
+	if !res.Summary.Completed {
+		t.Error("a clean full sweep did not report itself completed")
 	}
 }

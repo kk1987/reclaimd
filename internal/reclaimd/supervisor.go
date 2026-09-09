@@ -298,7 +298,7 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 
 	s.mu.Lock()
 	prev := st.Schedule.Interval
-	sched := st.Schedule.Next(res.Summary.Outcome, now, s.cfg)
+	sched := st.Schedule.Next(res.Summary, now, s.cfg)
 	sched.Cursor = res.Cursor
 	sched.RoundSeq = res.Summary.Seq
 	if res.Baseline.RoundP50 > 0 {

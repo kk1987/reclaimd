@@ -47,8 +47,11 @@ and shows its work.
   84% of the dropouts in the forensics had a slow block within the preceding
   10 MiB. Skipped segments are deferred, never dropped, and drained first next
   pass.
-- Re-probes deferred blocks at the end of a pass, after long enough for the
-  controller's read cache to clear, and counts the ones that **healed**.
+- Re-probes deferred blocks at the end of a pass, **waiting out** the delay the
+  controller's read cache needs to clear, and counts the ones that **healed**.
+  The wait is the point: a round that stops early stops sooner than that delay,
+  so a re-probe that merely skipped whatever was not yet due would report
+  nothing on precisely the disks worth measuring.
 - Serves a status page with live progress, the whole-drive latency map, the
   healing waterfall across passes (absolute, or diffed against the previous or
   the first pass), a freshness map of what has gone longest without a read, and
@@ -74,6 +77,7 @@ that produced it:
 |---|---|
 | **Read size** | the largest power of two that still fits in one SCSI command, from the disk's own `max_sectors_kb`, capped at 1 MiB. The forensics drive takes 1 MiB; a USB 2.0 stick behind `usb-storage` reports a 120 KiB limit and gets 64 KiB |
 | **Scan interval** | multiplicative: clean ×1.5, slow ×0.7, dropout ×0.5, clamped to 12 h–30 d |
+| **When to resume** | the interval is a *full-pass* cadence. A round that stopped on its circuit breaker did not deliver one, so it comes back at the floor and carries on from the cursor rather than waiting a whole interval to read the part it never reached |
 | **Slow / danger thresholds** | 5× and 50× the disk's own learned p50. On the drive under test that lands on 50 ms and 500 ms — the same numbers picked by hand during the forensics |
 | **Duty cycle** | rest scales with how far the rolling latency has drifted from the drive's *settled* latency, taken once the pass has warmed up. The read latency is the thermometer; no sensor needed |
 | **Backoff distance** | one 32 MiB superblock past a slow block, seven past a near-hang — 3× the measured 10 MiB precursor window |

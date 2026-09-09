@@ -66,24 +66,31 @@ const (
 
 // RoundSummary is one line of rounds.jsonl.
 type RoundSummary struct {
-	Seq            uint64    `json:"seq"`
-	StartedAt      time.Time `json:"started_at"`
-	EndedAt        time.Time `json:"ended_at"`
-	Outcome        string    `json:"outcome"`
-	BlocksRead     int       `json:"blocks_read_n"`
-	BlocksTotal    int       `json:"blocks_total_n"`
-	SlowBlocks     int       `json:"slow_blocks_n"`
-	DangerBlocks   int       `json:"danger_blocks_n"`
-	MediaErrors    int       `json:"media_errors_n"`
-	Dropouts       int       `json:"dropouts_n"`
-	Deferred       int       `json:"deferred_segments_n"`
-	Healed         int       `json:"healed_n"`
-	StillSlow      int       `json:"still_slow_n"`
-	BaselineMicros int64     `json:"baseline_us"`
-	SlowMicros     int64     `json:"slow_threshold_us"`
-	DangerMicros   int64     `json:"danger_threshold_us"`
-	StartOffset    int64     `json:"start_offset"`
-	BytesRead      int64     `json:"bytes_read"`
+	Seq       uint64    `json:"seq"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
+	Outcome   string    `json:"outcome"`
+
+	// Completed says the sweep reached the end of the ground it set out to
+	// cover, as opposed to stopping early on a circuit breaker. The outcome
+	// alone cannot say this: a pass that swept the whole disk and found slow
+	// blocks and a pass that quit after 8% both come out as "slow".
+	Completed bool `json:"completed"`
+
+	BlocksRead     int   `json:"blocks_read_n"`
+	BlocksTotal    int   `json:"blocks_total_n"`
+	SlowBlocks     int   `json:"slow_blocks_n"`
+	DangerBlocks   int   `json:"danger_blocks_n"`
+	MediaErrors    int   `json:"media_errors_n"`
+	Dropouts       int   `json:"dropouts_n"`
+	Deferred       int   `json:"deferred_segments_n"`
+	Healed         int   `json:"healed_n"`
+	StillSlow      int   `json:"still_slow_n"`
+	BaselineMicros int64 `json:"baseline_us"`
+	SlowMicros     int64 `json:"slow_threshold_us"`
+	DangerMicros   int64 `json:"danger_threshold_us"`
+	StartOffset    int64 `json:"start_offset"`
+	BytesRead      int64 `json:"bytes_read"`
 }
 
 // Event types written to events.jsonl.
