@@ -2,6 +2,8 @@
    the scanner can emit a hundred events a second and the page may sit open,
    unattended, on a router for weeks. */
 
+import { BASE } from './api.js';
+
 const HIDE_GRACE_MS = 60_000;
 
 export function connect(handlers) {
@@ -14,7 +16,7 @@ export function connect(handlers) {
   function open() {
     if (closed || es) return;
     try {
-      es = new EventSource('/api/v1/stream');
+      es = new EventSource(BASE + '/stream');
     } catch (e) {
       startPolling();
       return;
@@ -60,7 +62,7 @@ export function connect(handlers) {
     const tick = async () => {
       if (closed) return;
       try {
-        const r = await fetch('/api/v1/disks', { credentials: 'same-origin' });
+        const r = await fetch(BASE + '/disks', { credentials: 'same-origin' });
         if (r.ok) {
           handlers.onState?.({ change: 'POLL', refetch: ['disk'] });
           handlers.onStatus?.('live');

@@ -1,4 +1,8 @@
-const BASE = '/api/v1';
+/* Resolved from where this page is actually served, not hardcoded to the
+   root: on a router the status page usually ends up behind the nginx that is
+   already there, mounted under a prefix like /reclaimd/. An absolute '/api/v1'
+   would then be fetched from the proxy's root, which is somebody else's app. */
+export const BASE = new URL('api/v1', document.baseURI).pathname;
 
 /* Completed passes are immutable, so their profiles are cached forever both by
    the browser and here. The stacked view then costs one fetch per pass for the

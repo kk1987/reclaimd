@@ -166,6 +166,37 @@ There is nothing to configure. The daemon finds the disk, derives its read size
 from it and schedules itself; `/etc/reclaimd/config.json` is read if it exists
 and is not expected to.
 
+To reach the status page from the LAN, put it behind the web server the router
+is already running rather than binding the daemon to a LAN address:
+
+```sh
+cat deploy/reclaimd.locations | ssh root@<router> 'cat > /etc/nginx/conf.d/reclaimd.locations'
+ssh root@<router> 'nginx -t -c /etc/nginx/uci.conf && /etc/init.d/nginx reload'
+```
+
+On OpenWrt that file is included inside the default `_lan` server, so the page
+appears at `https://<router>/reclaimd/` — and the daemon keeps its loopback
+default, with no `ui_token` to manage and no restart. Binding `listen_addr` off
+loopback is the alternative, and then `ui_token` is not optional.
+
+Each location in that file also pulls in nginx's `restrict_locally`, so it can
+be included by hand into a vhost that faces the internet — one with a real
+certificate — and the page stays internal while the rest of the vhost does not:
+
+```nginx
+server {
+    server_name example.com;          # public, real certificate
+    include conf.d/reclaimd.locations;
+    location / { proxy_pass http://127.0.0.1:8080; }
+}
+```
+
+Verify which address the proxy sees before trusting that, because a gateway
+doing NAT reflection decides it: on the router this was written for, a LAN
+client reaching the public name is SNATed to the gateway's own LAN address and
+allowed, while a request arriving from the internet keeps its real source and
+gets 403.
+
 State goes to `/root/reclaimd`, **not** `/var/lib`: on OpenWrt `/var` is a
 symlink to `/tmp`, so state there is lost at every reboot along with the
 post-dropout suppression window — and the only symptom would be a daemon that
