@@ -72,7 +72,7 @@ that produced it:
 |---|---|
 | **Scan interval** | multiplicative: clean ×1.5, slow ×0.7, dropout ×0.5, clamped to 12 h–30 d |
 | **Slow / danger thresholds** | 5× and 50× the disk's own learned p50. On the drive under test that lands on 50 ms and 500 ms — the same numbers picked by hand during the forensics |
-| **Duty cycle** | rest scales with how far the rolling latency has drifted from the pass baseline. The read latency is the thermometer; no sensor needed |
+| **Duty cycle** | rest scales with how far the rolling latency has drifted from the drive's *settled* latency, taken once the pass has warmed up. The read latency is the thermometer; no sensor needed |
 | **Backoff distance** | one 32 MiB superblock past a slow block, seven past a near-hang — 3× the measured 10 MiB precursor window |
 
 The UI also shows what the *next* pass would do (`still clean → 23.6 d /

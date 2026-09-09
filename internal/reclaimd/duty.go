@@ -34,7 +34,38 @@ type DutyController struct {
 	state   string
 	drift   float64
 	restFor time.Duration
+
+	// ref is this controller's OWN reference, and it is deliberately not the
+	// frozen threshold baseline.
+	//
+	// That baseline is learned cold, on the first few hundred blocks, and
+	// freezing it is right for deciding what counts as a slow block. It is
+	// wrong here. Reading heats the drive, so its steady-state latency is
+	// simply higher than its cold-start latency -- on the drive under test,
+	// 10 ms against a 7.6 ms opening. A controller told to chase the cold
+	// number can never reach it however long it rests, so it rests harder
+	// forever: a measured full pass fell from 99 MiB/s to 16 MiB/s and stayed
+	// there, turning a ten-minute scan into sixty-three.
+	//
+	// So the reference is taken once the loop has settled, and drift is
+	// measured against the drive running warm rather than against the drive
+	// standing still.
+	ref      time.Duration
+	evals    int
+	ups      int
+	lastRoll time.Duration
 }
+
+// settleEvals is how many evaluations pass before the duty reference is taken.
+// At 64 blocks per evaluation this is a few hundred megabytes, by which point
+// the throughput curve has flattened.
+const settleEvals = 8
+
+// maxFruitlessUps bounds the integral term. If resting this many times running
+// has not brought the rolling latency down, resting is not the remedy: what is
+// being measured is where the drive simply is slower, not a device getting hot.
+// Without this the factor ratchets to its clamp and stays there.
+const maxFruitlessUps = 6
 
 // Duty states, reported to the UI as codes rather than sentences.
 const (
@@ -45,6 +76,10 @@ const (
 func NewDutyController(cfg Config) *DutyController {
 	return &DutyController{cfg: cfg, factor: cfg.DutyFactorInit, state: DutyRunning, drift: 1}
 }
+
+// Reference reports the latency drift is measured against, for the UI. Zero
+// until the loop has settled.
+func (c *DutyController) Reference() time.Duration { return c.ref }
 
 func (c *DutyController) Factor() float64 { return c.factor }
 func (c *DutyController) Drift() float64  { return c.drift }
@@ -57,15 +92,44 @@ func (c *DutyController) Evaluate(rolling, baseline time.Duration) {
 	if baseline <= 0 || rolling <= 0 {
 		return
 	}
-	c.drift = float64(rolling) / float64(baseline)
+	c.evals++
+
+	// Hold the reference open until the throughput curve has flattened, then
+	// take it. Falling back to the threshold baseline keeps the very first
+	// evaluations meaningful.
+	if c.ref == 0 {
+		if c.evals < settleEvals {
+			c.drift = float64(rolling) / float64(baseline)
+			return
+		}
+		c.ref = rolling
+	}
+
+	c.drift = float64(rolling) / float64(c.ref)
+	improved := c.lastRoll == 0 || rolling < c.lastRoll
+	c.lastRoll = rolling
+
 	switch {
 	case c.drift > c.cfg.DutyDriftHigh:
+		// Anti-windup. Resting is only worth doing while it is working; when
+		// it is not, the drift is telling us about the drive's own variation
+		// across its address space, which no amount of waiting will change.
+		if c.ups >= maxFruitlessUps && !improved {
+			break
+		}
 		c.factor *= c.cfg.DutyUp
+		if improved {
+			c.ups = 0
+		} else {
+			c.ups++
+		}
 	case c.drift < c.cfg.DutyDriftLow:
 		c.factor *= c.cfg.DutyDown
+		c.ups = 0
 	default:
 		// Deliberate dead band. Without it the controller oscillates around
 		// the threshold instead of settling.
+		c.ups = 0
 	}
 	if c.factor < 0 {
 		c.factor = 0
