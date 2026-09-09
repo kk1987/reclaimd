@@ -1,0 +1,57 @@
+name: Bug report
+description: Something the daemon got wrong, or a drive it handled badly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Drive behaviour is the useful part. A controller I have never seen
+        misbehaving is data I cannot get any other way, so please include the
+        kernel lines even if they look like noise.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what it did instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `reclaimd version`.
+      placeholder: v0.1.0 (abc1234, 2026-09-09T00:00:00Z)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - OpenWrt (procd init)
+        - Linux with systemd
+        - Other / running it by hand
+    validations:
+      required: true
+
+  - type: textarea
+    id: disk
+    attributes:
+      label: The drive
+      description: >
+        Output of `reclaimd list`. Redact the serial if you would rather not
+        publish it — the key alone is enough to follow the report.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Kernel and daemon log
+      description: >
+        `dmesg` on systemd, `logread -e reclaimd` on OpenWrt. If the drive
+        dropped off the bus, the `usb ... USB disconnect` lines around it are
+        the ones that matter.
+      render: text
