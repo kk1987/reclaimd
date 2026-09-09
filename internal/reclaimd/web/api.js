@@ -36,6 +36,13 @@ export async function getProfile(key, round = 'latest', res = 'full') {
   return buf;
 }
 
+/* Freshness changes every pass, so unlike a completed profile it is never
+   cached on either side. */
+export async function getFreshness(key) {
+  const r = await get(`/disks/${encodeURIComponent(key)}/freshness`);
+  return r.arrayBuffer();
+}
+
 export async function setEnabled(key, enabled) {
   return post(`/disks/${encodeURIComponent(key)}/enabled`, { enabled });
 }

@@ -17,6 +17,12 @@
   --heat-0:#c3d1d5; --heat-1:#f2b437; --heat-2:#ef7d2a; --heat-3:#d92d20;
   --heat-drop:#0e1a1f; --heat-skip:#e8edef;
 
+  /* Diverging ramp for the waterfall's diff modes. */
+  --diff-better-2:#0e7490; --diff-better-1:#7dd3d8; --diff-same:#e2e9eb;
+  --diff-worse-1:#f2b437; --diff-worse-2:#d92d20;
+  /* Freshness, keyed to the drive's own interval rather than absolute days. */
+  --fresh-0:#0f766e; --fresh-1:#7fb3ab; --fresh-2:#f2b437; --fresh-3:#d92d20;
+
   /* Measured vs inferred, carried over from c14: the report must never let a
      derived number pass for an observed one. */
   --measured:#0e7490; --est:#8a9aa0;
@@ -38,6 +44,9 @@
   --grade-degraded:#fb923c; --grade-failing:#f87171;
   --heat-0:#2b3f45; --heat-1:#eab308; --heat-2:#f97316; --heat-3:#ef4444;
   --heat-drop:#e6f2f5; --heat-skip:#16242a;
+  --diff-better-2:#22d3ee; --diff-better-1:#2b6b78; --diff-same:#1e2f35;
+  --diff-worse-1:#eab308; --diff-worse-2:#ef4444;
+  --fresh-0:#2dd4bf; --fresh-1:#2b6b62; --fresh-2:#eab308; --fresh-3:#ef4444;
   --measured:#22d3ee; --est:#5d7178;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -14px rgba(0,0,0,.6);
 }}
@@ -51,6 +60,9 @@
   --grade-degraded:#fb923c; --grade-failing:#f87171;
   --heat-0:#2b3f45; --heat-1:#eab308; --heat-2:#f97316; --heat-3:#ef4444;
   --heat-drop:#e6f2f5; --heat-skip:#16242a;
+  --diff-better-2:#22d3ee; --diff-better-1:#2b6b78; --diff-same:#1e2f35;
+  --diff-worse-1:#eab308; --diff-worse-2:#ef4444;
+  --fresh-0:#2dd4bf; --fresh-1:#2b6b62; --fresh-2:#eab308; --fresh-3:#ef4444;
   --measured:#22d3ee; --est:#5d7178;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -14px rgba(0,0,0,.6);
 }
@@ -186,3 +198,18 @@ footer{max-width:var(--maxw);margin:0 auto;padding:0 20px 40px;
   details{open:true}
   .card{break-inside:avoid;box-shadow:none}
 }
+
+/* freshness + structure */
+canvas.thin{width:100%;height:22px;display:block;background:var(--sunk);border-radius:2px}
+.headline{font-family:var(--cond);font-size:19px;font-weight:600}
+.headline .est{color:var(--est);font-size:12px;font-family:var(--sans);font-weight:400}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.two{grid-template-columns:1fr}}
+.two figure{margin:0;display:flex;flex-direction:column;gap:8px}
+.two svg{width:100%;height:auto;overflow:visible}
+.stub{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;
+  border-top:1px solid var(--line);max-height:220px;overflow-y:auto}
+.stub li{display:flex;justify-content:space-between;gap:10px;padding:6px 2px;
+  border-bottom:1px solid var(--line);font-size:13px;font-family:var(--mono)}
+.stub .n{color:var(--warn)}
+.empty{color:var(--ink-3);font-size:13px;padding:8px 2px}

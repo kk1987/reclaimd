@@ -59,6 +59,26 @@ export const DICT = {
     'map.stat': '第 {seq} 轮 · 慢 {slow} · 掉线 {drop} · 基线 {base}',
     'map.none': '还没有扫描数据',
 
+    'stack.abs': '绝对', 'stack.prev': '对比上一轮', 'stack.first': '对比首轮',
+    'stack.legend.better': '变好', 'stack.legend.same': '两轮都正常', 'stack.legend.worse': '变差',
+    'stack.diffNote': '差分模式屏蔽了两轮都正常的格子——不屏蔽的话，健康盘 8–12 毫秒的正常抖动会铺满整张图，把真正变化的那几格埋掉。这里的"变好"是推导出来的；经回探证实的治愈在事件日志里。',
+
+    'fresh.title': '新鲜度地图',
+    'fresh.oldest': '最老的一块数据已经 {age} 没被读过',
+    'fresh.never': '还有 {n} 段从未被读到过',
+    'fresh.caveat': '这是本工具读到的时间，是新鲜度的下界而不是上界：盘上文件系统自己的读取同样会刷新数据，但从裸设备这一层看不见。色标绑定这支盘当前的自适应间隔，所以间隔变了图仍然读作"有没有落后进度"。',
+    'fresh.legend.0': '刚读过', 'fresh.legend.1': '正常老化',
+    'fresh.legend.2': '逾期', 'fresh.legend.3': '陈旧/从未读到',
+
+    'structure.title': '物理结构',
+    'structure.aria': '按 superblock 内偏移的最慢延迟',
+    'structure.caption': '按 offset mod {seg} 分组的最慢延迟。峰值在偏移 {peak}（{peakMs}），也就是每个擦除块的最后一个位置——NAND 上最脆弱的那条 wordline。这是 daemon 自己认出了这支盘的物理版图。',
+    'structure.captionFlat': '按 offset mod {seg} 分组的最慢延迟。目前没有明显峰值，说明退化还没有沿物理版图排开。',
+    'structure.stubborn': '顽固区',
+    'structure.stubbornNote': '连续多轮偏慢、且从未回探成功的段。99% 的退化块读一次就自愈，剩下这些才值得占用注意力——考虑对它们跑一次 reclaimd refresh -range=。',
+    'structure.stubbornNone': '没有顽固区，所有退化块都自愈了。',
+    'structure.streak': '连续 {n} 轮',
+
     'stack.title': '治愈瀑布',
     'stack.lede': '每一行是一轮扫描，时间从上往下。坏区表现为逐渐褪色的竖条纹——那就是 read reclaim 在把块搬走。',
     'trends.title': '历史趋势', 'trends.aria': '每轮掉线数与慢块数',
@@ -136,6 +156,26 @@ export const DICT = {
     'map.legend.drop': 'dropout', 'map.legend.skip': 'not measured',
     'map.stat': 'pass #{seq} · {slow} slow · {drop} dropouts · baseline {base}',
     'map.none': 'No scan data yet',
+
+    'stack.abs': 'Absolute', 'stack.prev': 'vs previous', 'stack.first': 'vs first',
+    'stack.legend.better': 'better', 'stack.legend.same': 'both normal', 'stack.legend.worse': 'worse',
+    'stack.diffNote': 'Diff mode masks cells that were normal in both passes. Without that, the ordinary 8-12 ms jitter of a healthy drive fills the chart and buries the handful of cells that actually changed. "Better" here is inferred; healing confirmed by re-probe is in the event log.',
+
+    'fresh.title': 'Freshness map',
+    'fresh.oldest': 'The stalest data has gone {age} without a read',
+    'fresh.never': '{n} segments have never been read',
+    'fresh.caveat': 'This counts reads by this tool, so it is a lower bound on freshness and never an upper one: the filesystem on the drive refreshes data too, and that is invisible from the raw device. The scale is keyed to this drive\u2019s own current interval, so the map keeps reading as "are we behind?" however the schedule adapts.',
+    'fresh.legend.0': 'just read', 'fresh.legend.1': 'aging normally',
+    'fresh.legend.2': 'overdue', 'fresh.legend.3': 'stale / never read',
+
+    'structure.title': 'Physical structure',
+    'structure.aria': 'Worst latency by offset within a superblock',
+    'structure.caption': 'Worst latency grouped by offset mod {seg}. The peak sits at offset {peak} ({peakMs}) \u2014 the last position in every erase block, the most fragile wordline on the die. This is the daemon working out the physical layout of the drive in front of it.',
+    'structure.captionFlat': 'Worst latency grouped by offset mod {seg}. No clear peak yet, so degradation has not lined up with the physical layout.',
+    'structure.stubborn': 'Stubborn regions',
+    'structure.stubbornNote': 'Segments that read slow for several passes running and never came back healed. 99% of degraded blocks fix themselves on the next read; these are the ones worth your attention \u2014 consider reclaimd refresh -range= over them.',
+    'structure.stubbornNone': 'No stubborn regions: every degraded block healed itself.',
+    'structure.streak': '{n} passes running',
 
     'stack.title': 'Healing waterfall',
     'stack.lede': 'One row per pass, time running downward. Bad regions show up as vertical streaks that fade — that is read reclaim moving the blocks.',

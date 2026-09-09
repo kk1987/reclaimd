@@ -97,10 +97,41 @@
   <section id="stack" class="card" hidden>
     <h2 data-i18n="stack.title"></h2>
     <p class="lede" data-i18n="stack.lede"></p>
+    <div class="seg" role="group" id="stack-mode" style="align-self:flex-start">
+      <button type="button" data-mode="abs" aria-pressed="true" data-i18n="stack.abs"></button>
+      <button type="button" data-mode="prev" aria-pressed="false" data-i18n="stack.prev"></button>
+      <button type="button" data-mode="first" aria-pressed="false" data-i18n="stack.first"></button>
+    </div>
     <div class="stackgrid">
       <div class="stacklabels mono" id="stack-labels"></div>
       <canvas id="stack-canvas"></canvas>
       <div class="stackstats mono" id="stack-stats"></div>
+    </div>
+    <div class="legend" id="stack-legend"></div>
+  </section>
+
+  <section id="fresh" class="card" hidden>
+    <h2 data-i18n="fresh.title"></h2>
+    <p class="headline" id="fresh-oldest"></p>
+    <canvas id="fresh-canvas" class="thin"></canvas>
+    <div class="axis mono" id="fresh-axis"></div>
+    <div class="legend" id="fresh-legend"></div>
+    <p class="cap" data-i18n="fresh.caveat"></p>
+  </section>
+
+  <section id="structure" class="card" hidden>
+    <h2 data-i18n="structure.title"></h2>
+    <div class="two">
+      <figure>
+        <svg id="mod-hist" viewBox="0 0 420 190" role="img"
+          data-i18n-attr="aria-label:structure.aria"></svg>
+        <figcaption class="cap" id="mod-caption"></figcaption>
+      </figure>
+      <div>
+        <h3 data-i18n="structure.stubborn"></h3>
+        <p class="cap" data-i18n="structure.stubbornNote"></p>
+        <ol id="stubborn" class="stub"></ol>
+      </div>
     </div>
   </section>
 

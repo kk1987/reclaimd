@@ -11,6 +11,9 @@ export function readPalette() {
   return {
     heat: [v('--heat-0'), v('--heat-1'), v('--heat-2'), v('--heat-3')],
     drop: v('--heat-drop'), skip: v('--heat-skip'),
+    diff: [v('--diff-better-2'), v('--diff-better-1'), v('--diff-same'),
+           v('--diff-worse-1'), v('--diff-worse-2')],
+    fresh: [v('--fresh-0'), v('--fresh-1'), v('--fresh-2'), v('--fresh-3')],
     sunk: v('--sunk'), ink: v('--ink'), accent: v('--accent'), line: v('--line'),
   };
 }
@@ -97,6 +100,12 @@ export function drawStrip(canvas, prof, opts = {}) {
    were sampled differently would be a lie told with a picture. */
 export function drawStack(canvas, profiles, opts = {}) {
   const pal = opts.palette || readPalette();
+  const mode = opts.mode || 'abs';
+  /* In diff mode every row is compared against one reference: the row above it
+     ("prev") or the very first pass ("first"). Comparing against the first pass
+     is the one that shows the whole story at once -- a wall of red turning to a
+     wall of blue. */
+  const refFor = (r) => mode === 'prev' ? profiles[r - 1] : profiles[0];
   const rowH = opts.rowH || 16, gap = 2;
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || 600;
@@ -109,19 +118,156 @@ export function drawStack(canvas, profiles, opts = {}) {
   ctx.fillStyle = pal.sunk;
   ctx.fillRect(0, 0, W, H);
 
+  const binCache = profiles.map((p) => downsampleMax(p.values, W, p.baselineMs));
+
   profiles.forEach((prof, r) => {
     const y = r * (rowH + gap);
-    const bins = downsampleMax(prof.values, W, prof.baselineMs);
+    const bins = binCache[r];
+    const ref = mode === 'abs' ? null : refFor(r);
+    const refBins = ref ? binCache[profiles.indexOf(ref)] : null;
+
     for (let x = 0; x < W; x++) {
       const b = bins[x];
-      if (b.skip) { ctx.fillStyle = pal.skip; }
-      else if (b.code < 0) { continue; }
-      else { ctx.fillStyle = pal.heat[bucketOf(b.code, prof.baselineMs)] || pal.heat[0]; }
+      if (b.skip) { ctx.fillStyle = pal.skip; ctx.fillRect(x, y, 1, rowH); continue; }
+      if (b.code < 0) continue;
+      const now = bucketOf(b.code, prof.baselineMs);
+
+      if (!refBins || ref === prof) {
+        ctx.fillStyle = pal.heat[now] || pal.heat[0];
+      } else {
+        const rb = refBins[x];
+        const was = (rb && rb.code >= 0) ? bucketOf(rb.code, ref.baselineMs) : null;
+        if (was === null) { ctx.fillStyle = pal.skip; }
+        else if (was === 0 && now === 0) {
+          /* Both ends normal. Masked deliberately: without this the ordinary
+             8-12 ms jitter of a healthy drive fills the entire chart with
+             noise and buries the handful of cells that actually changed. */
+          ctx.fillStyle = pal.diff[2];
+        } else {
+          const d = Math.max(-2, Math.min(2, now - was));
+          ctx.fillStyle = pal.diff[d + 2];
+        }
+      }
       ctx.fillRect(x, y, 1, rowH);
     }
     ctx.fillStyle = pal.drop;
     for (let x = 0; x < W; x++) if (bins[x].drop) ctx.fillRect(x, y, 1.5, rowH);
   });
+}
+
+/* Freshness: how long since this tool last read each segment.
+   The scale is keyed to the drive's own current interval rather than to
+   absolute days, so the map keeps reading as "are we behind schedule?" however
+   the schedule has adapted. */
+export function drawFreshness(canvas, ages, intervalS, opts = {}) {
+  const pal = opts.palette || readPalette();
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth || 600;
+  const H = canvas.clientHeight || 24;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = pal.sunk;
+  ctx.fillRect(0, 0, W, H);
+  if (!ages || !ages.length) return [0, 0, 0, 0];
+
+  const now = Date.now() / 1000;
+  const iv = intervalS > 0 ? intervalS : 7 * 86400;
+  const counts = [0, 0, 0, 0];
+  for (let x = 0; x < W; x++) {
+    const lo = Math.floor((x * ages.length) / W);
+    const hi = Math.max(lo + 1, Math.floor(((x + 1) * ages.length) / W));
+    let worst = -1; // oldest wins: the stalest segment is the risk
+    for (let i = lo; i < hi && i < ages.length; i++) {
+      const age = ages[i] === 0 ? Infinity : now - ages[i];
+      if (worst < 0 || age > worst) worst = age;
+    }
+    const b = worst === Infinity ? 3 : worst > iv * 2 ? 3 : worst > iv ? 2 : worst > iv / 2 ? 1 : 0;
+    counts[b]++;
+    ctx.fillStyle = pal.fresh[b];
+    ctx.fillRect(x, 0, 1, H);
+  }
+  return counts;
+}
+
+/* Per-offset-within-superblock latency. This is the daemon showing that it has
+   worked out the physical layout of the drive in front of it: on the reference
+   stick 90.5% of the extreme blocks land on the last position, the final
+   wordline of an erase block. */
+export function svgModHistogram(el, prof, blocksPerSegment) {
+  if (!prof || !blocksPerSegment) { el.innerHTML = ''; return null; }
+  const n = blocksPerSegment;
+  const worst = new Float64Array(n);
+  const count = new Uint32Array(n);
+  for (let i = 0; i < prof.values.length; i++) {
+    const c = prof.values[i];
+    const ms = codeToMs(c);
+    if (ms === null) continue;
+    const k = i % n;
+    if (ms > worst[k]) worst[k] = ms;
+    if (bucketOf(c, prof.baselineMs) >= 1) count[k]++;
+  }
+  const max = Math.max(1, ...worst);
+  const peak = worst.indexOf(max);
+
+  const W = 420, H = 190, L = 40, R = 8, T = 14, B = 26;
+  const iw = W - L - R, ih = H - T - B, bw = iw / n;
+  const parts = [];
+  for (const frac of [0, 0.5, 1]) {
+    const y = T + ih - frac * ih;
+    parts.push(`<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="var(--line)" stroke-width="1"/>`);
+    parts.push(`<text x="${L - 6}" y="${y + 3.5}" text-anchor="end" font-size="10"
+      font-family="var(--mono)" fill="var(--ink-3)">${Math.round(max * frac)}</text>`);
+  }
+  for (let k = 0; k < n; k++) {
+    const h = (worst[k] / max) * ih;
+    parts.push(`<rect x="${(L + k * bw + 0.4).toFixed(1)}" y="${(T + ih - h).toFixed(1)}"
+      width="${Math.max(0.8, bw - 0.8).toFixed(1)}" height="${Math.max(h, 0.8).toFixed(1)}"
+      fill="${k === peak ? 'var(--heat-3)' : 'var(--ink-3)'}" rx="0.5"
+      ><title>+${k}: ${Math.round(worst[k])} ms, ${count[k]} slow</title></rect>`);
+  }
+  for (const k of [0, Math.floor(n / 4), Math.floor(n / 2), n - 1]) {
+    parts.push(`<text x="${(L + k * bw + bw / 2).toFixed(1)}" y="${H - 10}" text-anchor="middle"
+      font-size="10" font-family="var(--mono)" fill="var(--ink-3)">${k}</text>`);
+  }
+  el.innerHTML = parts.join('');
+  return { peak, peakMs: max, peakSlow: count[peak],
+           totalSlow: count.reduce((a, b) => a + b, 0) };
+}
+
+/* Segments that keep coming back slow and never report healed. This is the only
+   output of the whole tool that asks for a human: 99% of degraded blocks fix
+   themselves on the next read, so the 1% that do not are worth the attention
+   that would be wasted on the rest. */
+export function findStubborn(profiles, blocksPerSegment, limit = 12) {
+  if (profiles.length < 2) return [];
+  const newest = profiles[profiles.length - 1];
+  const segs = Math.ceil(newest.values.length / blocksPerSegment);
+  const out = [];
+  for (let seg = 0; seg < segs; seg++) {
+    let streak = 0;
+    for (let r = profiles.length - 1; r >= 0; r--) {
+      const p = profiles[r];
+      const lo = seg * blocksPerSegment;
+      const hi = Math.min(lo + blocksPerSegment, p.values.length);
+      let bad = false, sawGood = false;
+      for (let i = lo; i < hi; i++) {
+        const c = p.values[i];
+        if (c === 0xFFFF) continue;
+        if (bucketOf(c, p.baselineMs) >= 1) { bad = true; break; }
+        sawGood = true;
+      }
+      if (bad) streak++;
+      else if (sawGood) break; // it read clean at some point, so it is not stuck
+      else break;              // only skips from here back; no evidence either way
+    }
+    if (streak >= 2) {
+      out.push({ seg, streak, offsetMiB: (seg * blocksPerSegment * newest.blockSize) / (1 << 20) });
+    }
+  }
+  out.sort((a, b) => b.streak - a.streak);
+  return out.slice(0, limit);
 }
 
 export function svgDutyGauge(el, drift, threshold) {

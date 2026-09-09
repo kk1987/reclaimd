@@ -14,7 +14,13 @@ const state = {
   events: [],
   profile: null,
   stack: [],
+  freshness: null,
+  stackMode: 'abs',
 };
+
+/* Blocks per superblock. The daemon's own segment size is 32 MiB at 1 MiB
+   blocks; the mod histogram and the stubborn-region scan both key off it. */
+const BLOCKS_PER_SEGMENT = 32;
 
 /* ---------------------------------------------------------------- boot ---- */
 
@@ -65,6 +71,15 @@ function wireChrome() {
     if (k && k !== state.selected) { state.selected = k; refreshDetail(); }
   });
 
+  document.querySelectorAll('#stack-mode [data-mode]').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.stackMode = b.dataset.mode;
+      document.querySelectorAll('#stack-mode [data-mode]').forEach((o) =>
+        o.setAttribute('aria-pressed', String(o.dataset.mode === state.stackMode)));
+      renderStack();
+    });
+  });
+
   new ResizeObserver(scheduleRedraw).observe($('map-canvas'));
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleRedraw);
   new MutationObserver(scheduleRedraw).observe(document.documentElement,
@@ -105,6 +120,11 @@ async function loadProfiles() {
     state.profile = decodeProfile(await api.getProfile(state.selected, 'latest'));
   } catch (e) { /* no pass yet */ }
 
+  try {
+    const buf = await api.getFreshness(state.selected);
+    state.freshness = new Uint32Array(buf);
+  } catch (e) { state.freshness = null; }
+
   /* Only completed passes are fetched for the waterfall, and those are
      immutable and cached, so this costs one request per pass ever. */
   const seqs = state.rounds.map((r) => r.seq).filter(Boolean).slice(-10);
@@ -124,6 +144,8 @@ function renderAll() {
   renderControllers();
   renderMap();
   renderStack();
+  renderFreshness();
+  renderStructure();
   renderTrends();
   renderEvents();
   renderFooter();
@@ -274,13 +296,76 @@ function renderStack() {
   const sec = $('stack');
   if (state.stack.length < 2) { sec.hidden = true; return; }
   sec.hidden = false;
-  C.drawStack($('stack-canvas'), state.stack, { rowH: 16 });
+  C.drawStack($('stack-canvas'), state.stack, { rowH: 16, mode: state.stackMode });
+  $('stack-legend').innerHTML = state.stackMode === 'abs'
+    ? C.legendHTML(state.stack[state.stack.length - 1].baselineMs)
+    : `<span><i style="background:var(--diff-better-2)"></i>${I.t('stack.legend.better')}</span>
+       <span><i style="background:var(--diff-same)"></i>${I.t('stack.legend.same')}</span>
+       <span><i style="background:var(--diff-worse-2)"></i>${I.t('stack.legend.worse')}</span>
+       <span class="cap" style="flex:1 1 100%">${I.t('stack.diffNote')}</span>`;
   $('stack-labels').innerHTML = state.stack.map((p) =>
     `<div style="height:18px">${I.fmtStamp(p.startedTs)}</div>`).join('');
   $('stack-stats').innerHTML = state.stack.map((p) => {
     const r = state.rounds.find((x) => x.seq === p.seq);
     return `<div style="height:18px">${r ? (r.slow_blocks_n || 0) + '/' + (r.dropouts_n || 0) : ''}</div>`;
   }).join('');
+}
+
+function renderFreshness() {
+  const sec = $('fresh');
+  if (!state.freshness || !state.freshness.length) { sec.hidden = true; return; }
+  sec.hidden = false;
+  const iv = state.detail?.interval_s || 0;
+  const counts = C.drawFreshness($('fresh-canvas'), state.freshness, iv);
+
+  const oldest = state.detail?.oldest_data_s;
+  const never = Array.prototype.reduce.call(state.freshness, (n, v) => n + (v === 0 ? 1 : 0), 0);
+  /* The single most honest measure of what this tool is protecting, so it gets
+     headline size rather than a row in a table. */
+  let head = oldest ? I.t('fresh.oldest', { age: I.fmtDur(oldest) }) : '';
+  if (never > 0) head += `<span class="est"> · ${I.t('fresh.never', { n: never })}</span>`;
+  $('fresh-oldest').innerHTML = head;
+
+  $('fresh-legend').innerHTML = [0, 1, 2, 3].map((b) =>
+    `<span><i style="background:var(--fresh-${b})"></i>${I.t('fresh.legend.' + b)}
+     <span class="mono">${counts[b]}</span></span>`).join('');
+
+  const p = state.profile;
+  if (p) {
+    const totalGiB = (p.count * p.blockSize) / (1 << 30);
+    $('fresh-axis').innerHTML = [0, 1, 2, 3, 4, 5, 6, 7].map((i, n, a) =>
+      `<span>${Math.round((totalGiB * i) / 7)}${i === 7 ? ' GiB' : ''}</span>`).join('');
+  }
+}
+
+function renderStructure() {
+  const sec = $('structure');
+  if (!state.profile) { sec.hidden = true; return; }
+  sec.hidden = false;
+
+  const segMiB = (BLOCKS_PER_SEGMENT * state.profile.blockSize) / (1 << 20);
+  const r = C.svgModHistogram($('mod-hist'), state.profile, BLOCKS_PER_SEGMENT);
+  if (r && r.totalSlow > 0 && r.peak === BLOCKS_PER_SEGMENT - 1) {
+    $('mod-caption').textContent = I.t('structure.caption', {
+      seg: segMiB + ' MiB', peak: r.peak, peakMs: I.fmtLatency(r.peakMs) });
+  } else {
+    $('mod-caption').textContent = I.t('structure.captionFlat', { seg: segMiB + ' MiB' });
+  }
+
+  const stub = C.findStubborn(state.stack.length ? state.stack : [state.profile],
+    BLOCKS_PER_SEGMENT);
+  const list = $('stubborn');
+  list.innerHTML = '';
+  if (!stub.length) {
+    list.innerHTML = `<li class="empty">${esc(I.t('structure.stubbornNone'))}</li>`;
+    return;
+  }
+  for (const sgm of stub) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${esc(I.fmtMiB(sgm.offsetMiB))}</span>
+      <span class="n">${esc(I.t('structure.streak', { n: sgm.streak }))}</span>`;
+    list.appendChild(li);
+  }
 }
 
 function renderTrends() {
@@ -355,7 +440,13 @@ function scheduleRedraw() {
         { cursorMiB: live?.pos_mib, totalMiB: live?.total_mib });
       $('map-legend').innerHTML = C.legendHTML(state.profile.baselineMs);
     }
-    if (state.stack.length >= 2) C.drawStack($('stack-canvas'), state.stack, { rowH: 16 });
+    if (state.stack.length >= 2) {
+      C.drawStack($('stack-canvas'), state.stack, { rowH: 16, mode: state.stackMode });
+    }
+    if (state.freshness) {
+      C.drawFreshness($('fresh-canvas'), state.freshness, state.detail?.interval_s || 0);
+    }
+    if (state.profile) C.svgModHistogram($('mod-hist'), state.profile, BLOCKS_PER_SEGMENT);
     if (state.rounds.length >= 2) C.svgTrends($('trend-svg'), state.rounds);
   });
 }
