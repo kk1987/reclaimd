@@ -34,6 +34,7 @@ type Hub struct {
 	clients map[chan Frame]struct{}
 	ring    []Frame
 	nextID  uint64
+	closed  bool
 }
 
 func NewHub() *Hub {
@@ -43,7 +44,7 @@ func NewHub() *Hub {
 func (h *Hub) Subscribe(lastID uint64) (<-chan Frame, func(), bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.clients) >= maxSSEClients {
+	if h.closed || len(h.clients) >= maxSSEClients {
 		return nil, nil, false
 	}
 	ch := make(chan Frame, 8)
@@ -83,6 +84,9 @@ func (h *Hub) Publish(event string, payload any) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
 
 	h.nextID++
 	f := Frame{Event: event, ID: h.nextID, Data: b}
@@ -106,6 +110,30 @@ func (h *Hub) Publish(event string, payload any) {
 			default:
 			}
 		}
+	}
+}
+
+// Close ends every open stream so a shutdown already in progress can finish.
+//
+// An SSE response never completes on its own, and http.Server.Shutdown waits
+// for active connections to go idle: a stream politely holding its connection
+// open is never idle, so every restart burned the entire shutdown grace, logged
+// a failure at the end of it, and left the proxy in front serving 502s for the
+// duration. Closing the client channels makes each stream return at once, and
+// EventSource reconnects by itself as soon as the new process is listening.
+//
+// After this the hub stays closed: a request that arrives mid-shutdown is
+// refused a stream rather than handed one nothing will ever close.
+func (h *Hub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	h.closed = true
+	for ch := range h.clients {
+		delete(h.clients, ch)
+		close(ch)
 	}
 }
 

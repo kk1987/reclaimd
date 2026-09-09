@@ -377,6 +377,10 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// CloseStreams ends every open event stream. Call it before shutting the HTTP
+// server down; see Hub.Close for why the order matters.
+func (s *Server) CloseStreams() { s.hub.Close() }
+
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	s.hub.ServeSSE(w, r, map[string]any{
 		"v":         1,

@@ -335,6 +335,9 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) error {
 	_ = reclaimd.NotifyStopping()
 	cancel()
 	close(stopPublisher)
+	// Before Shutdown, not after: it waits for connections to go idle, and an
+	// open event stream never does.
+	srv.CloseStreams()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
