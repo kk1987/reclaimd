@@ -1,5 +1,7 @@
 # reclaimd
 
+[![ci](https://img.shields.io/github/actions/workflow/status/kk1987/reclaimd/ci.yml?branch=main&label=ci)](https://github.com/kk1987/reclaimd/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/kk1987/reclaimd)](https://github.com/kk1987/reclaimd/releases/latest) [![go](https://img.shields.io/github/go-mod/go-version/kk1987/reclaimd)](go.mod) [![license](https://img.shields.io/github/license/kk1987/reclaimd)](LICENSE)
+
 Keeps USB flash drives readable by periodically reading them end to end.
 
 ## Why this exists
@@ -82,8 +84,18 @@ than trusted.
 
 ## Build
 
+Prebuilt binaries for both architectures are attached to every
+[release](https://github.com/kk1987/reclaimd/releases/latest), with a
+`SHA256SUMS` next to them. To build it yourself:
+
 ```sh
 ./build.sh          # out/reclaimd-linux-amd64, out/reclaimd-linux-arm64
+```
+
+Or, for the host you are already on:
+
+```sh
+go install github.com/kk1987/reclaimd/cmd/reclaimd@latest
 ```
 
 `CGO_ENABLED=0` throughout: with no libc linkage the musl/glibc split does not
@@ -185,3 +197,13 @@ The scanner does not drill down to locate a slow block precisely. Re-reading the
 neighbourhood at a finer granularity would sharpen the map, and it would do so by
 walking straight back into the thing being avoided. It backs off to the next
 superblock boundary instead and lets the controller finish reclaiming in peace.
+
+## Contributing
+
+Bug reports from drives I have never seen are the most useful thing here — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for what to include, and
+[SECURITY.md](SECURITY.md) for anything that should not be filed in public.
+
+## License
+
+[MIT](LICENSE).
