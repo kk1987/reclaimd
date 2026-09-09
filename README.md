@@ -43,8 +43,15 @@ and shows its work.
 - Re-probes deferred blocks at the end of a pass, after long enough for the
   controller's read cache to clear, and counts the ones that **healed**.
 - Serves a status page with live progress, the whole-drive latency map, the
-  healing waterfall across passes, and a decision desk that explains every
-  adaptive value it chose.
+  healing waterfall across passes (absolute, or diffed against the previous or
+  the first pass), a freshness map of what has gone longest without a read, and
+  a decision desk that explains every adaptive value it chose.
+- Shows what it has worked out about the hardware: worst latency by offset
+  within a superblock, which on the drive under test peaks on the last position
+  of every erase block. Next to it sits the only output that asks for a human —
+  segments that stayed slow for several passes and never healed.
+- Publishes its own wear bill in the footer. Measured at roughly 9 MiB a year
+  on a ten-day cadence.
 
 **The daemon never writes to a disk.** It opens read-only, and the systemd unit
 makes that a kernel-enforced property via `DeviceAllow=block-sd r` rather than a
@@ -80,14 +87,16 @@ at all — `go.mod` has no `require` block.
 ## Run
 
 ```sh
-reclaimd list             # what it sees, and the key it files it under
-reclaimd daemon           # maintain + serve http://127.0.0.1:8099
+reclaimd list                     # what it sees, and the key it files it under
+reclaimd daemon                   # maintain + serve http://127.0.0.1:8099
+reclaimd scan -disk=<key>         # one pass now; 0 clean, 2 slow, 3 near-hang
 reclaimd version
 ```
 
 | command | does | disk I/O |
 |---|---|---|
 | `daemon` | discovery, adoption, scheduling, scanning, status page | read-only |
+| `scan` | one pass over one disk; outcome in the exit code | read-only |
 | `list` | enumerate USB disks and show computed keys | none |
 | `export` | dump all stored state as JSON | none |
 | `refresh` | rewrite a disk in place, behind four gates | **read-write** |
