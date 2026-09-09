@@ -9,7 +9,14 @@ Keeps USB flash drives readable by periodically reading them end to end.
 A USB flash drive left plugged in for months — hanging off a router, carrying a
 NAS boot volume, sitting in a media box — starts dropping off the USB bus during
 ordinary reads and re-enumerating seconds later under a new device name. That
-looks like a dying controller, and on the drive traced here it was not:
+looks like a dying controller.
+
+On the drive that prompted this tool it was not. That drive was a 64 GB USB 3.0
+stick which had spent months as a router's overlay filesystem, and the findings
+below come from reading it end to end several times over and timing every block.
+The rest of this repository calls that investigation **the forensics** and the
+stick **the drive under test**; where a comment cites a number from either, it
+is that one drive's number and not a universal constant.
 
 - **NAND data-retention loss.** Data left unread long enough drifts toward the
   ECC margin. Reading it makes the controller work: a 1 MiB block that normally
@@ -18,9 +25,9 @@ looks like a dying controller, and on the drive traced here it was not:
   internal watchdog power-cycles the whole device. The kernel sees a clean
   `USB disconnect` with no SCSI timeout, no reset and no protocol error.
 - **Reading a degraded block hands the controller its read-reclaim trigger**, so
-  it gets rewritten and is healthy afterwards. Three full passes over one such
-  drive went **110 → 10 → 1 dropouts** and **1181 → 258 → 26 slow blocks**; of
-  347 blocks over 500 ms in pass one, **345 read normally in pass two**.
+  it gets rewritten and is healthy afterwards. Three full passes over it went
+  **110 → 10 → 1 dropouts** and **1181 → 258 → 26 slow blocks**; of the 347
+  blocks over 500 ms in pass one, **345 read normally in pass two**.
 - Degradation follows the physical layout, not the filesystem: **90.5% of the
   extreme blocks sit at `offset mod 32 MiB == 31`** — the last wordline of an
   erase block, the most fragile place on the die.
@@ -34,6 +41,15 @@ looks like a dying controller, and on the drive traced here it was not:
 So the hardware was fine and the data on it had gone stale. Reading the whole
 drive on a schedule prevents that from ever accumulating. This daemon does that,
 and shows its work.
+
+The mechanism carries across drives; the constants do not. A second stick — a
+cheap 29 GB one behind `usb-storage`, whose transfer limit is 120 KiB rather
+than 1 MiB — produced the same story in a different shape: stalls of 3.8 to
+5.1 s that never dropped the bus at all, and every one of them reading back at
+4-5 ms once it had been read once. Same read-reclaim, a controller with a
+longer fuse, none of the same numbers. That is why nothing here is a fixed
+millisecond count or a fixed block size: every threshold is derived from the
+disk in front of it, and the UI shows the derivation.
 
 ## What it does
 
