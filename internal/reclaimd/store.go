@@ -2,6 +2,7 @@ package reclaimd
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -54,6 +55,10 @@ type Store struct {
 
 	mu      sync.Mutex
 	eventID uint64
+	// written accumulates what this process has written per disk since the last
+	// TakeBytesWritten. A tool whose whole justification is wear should be able
+	// to state its own wear bill, and the footer of the status page prints it.
+	written map[string]int64
 }
 
 // OpenStore prepares the state directory and takes the process lock.
@@ -85,7 +90,7 @@ func OpenStore(root string, logger *slog.Logger) (*Store, error) {
 		return nil, fmt.Errorf("%w: another reclaimd holds %s", ErrLockHeld, lockPath)
 	}
 
-	s := &Store{root: root, logger: logger, lock: lf}
+	s := &Store{root: root, logger: logger, lock: lf, written: map[string]int64{}}
 	s.eventID = s.highestEventID()
 	return s, nil
 }
@@ -103,6 +108,25 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) diskDir(key string) string { return filepath.Join(s.root, "disks", key) }
+
+func (s *Store) account(key string, n int) {
+	if n <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.written[key] += int64(n)
+	s.mu.Unlock()
+}
+
+// TakeBytesWritten returns and clears the accumulated byte count, so the caller
+// can fold it into the durable per-disk total exactly once.
+func (s *Store) TakeBytesWritten(key string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.written[key]
+	s.written[key] = 0
+	return n
+}
 
 func (s *Store) ensureDisk(key string) (string, error) {
 	d := s.diskDir(key)
@@ -152,6 +176,15 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+func (s *Store) writeJSONAccounted(key, path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	s.account(key, len(b)+1)
+	return writeAtomic(path, append(b, '\n'), 0o600)
 }
 
 func writeJSONAtomic(path string, v any) error {
@@ -204,7 +237,7 @@ func (s *Store) SaveMeta(key string, m Meta) error {
 		return err
 	}
 	m.Schema = stateSchema
-	return writeJSONAtomic(filepath.Join(s.diskDir(key), "meta.json"), m)
+	return s.writeJSONAccounted(key, filepath.Join(s.diskDir(key), "meta.json"), m)
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +258,7 @@ func (s *Store) SaveSchedule(key string, sc Schedule) error {
 		return err
 	}
 	sc.Schema = stateSchema
-	return writeJSONAtomic(filepath.Join(s.diskDir(key), "schedule.json"), sc)
+	return s.writeJSONAccounted(key, filepath.Join(s.diskDir(key), "schedule.json"), sc)
 }
 
 func (s *Store) LoadProgress(key string) (Progress, error) {
@@ -247,7 +280,7 @@ func (s *Store) SaveProgress(key string, p Progress) error {
 	}
 	p.Schema = stateSchema
 	p.UpdatedAt = time.Now()
-	return writeJSONAtomic(filepath.Join(s.diskDir(key), "progress.json"), p)
+	return s.writeJSONAccounted(key, filepath.Join(s.diskDir(key), "progress.json"), p)
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +294,7 @@ func (s *Store) SaveDeferred(key string, bits []byte) error {
 	if _, err := s.ensureDisk(key); err != nil {
 		return err
 	}
+	s.account(key, len(bits))
 	return writeAtomic(filepath.Join(s.diskDir(key), "deferred.bits"), bits, 0o600)
 }
 
@@ -297,6 +331,7 @@ func (s *Store) AppendRound(key string, r RoundSummary) error {
 	if _, err := s.ensureDisk(key); err != nil {
 		return err
 	}
+	s.account(key, 220) // one summary line, near enough for a wear estimate
 	return appendLine(filepath.Join(s.diskDir(key), "rounds.jsonl"), r)
 }
 
@@ -343,6 +378,7 @@ func (s *Store) AppendEvent(key string, e Event) error {
 	if e.At.IsZero() {
 		e.At = time.Now()
 	}
+	s.account(key, 200)
 	return appendLine(filepath.Join(s.diskDir(key), "events.jsonl"), e)
 }
 
@@ -414,6 +450,7 @@ func (s *Store) SaveProfile(key string, m *LatencyMap, blocksPerSegment, keepFul
 	if err != nil {
 		return err
 	}
+	s.account(key, len(full)*2) // history copy plus latest.lat
 	name := fmt.Sprintf("%06d.lat", m.RoundSeq)
 	if err := writeAtomic(filepath.Join(dir, "history", name), full, 0o600); err != nil {
 		return err
@@ -435,6 +472,7 @@ func (s *Store) SaveProfile(key string, m *LatencyMap, blocksPerSegment, keepFul
 	if err != nil {
 		return err
 	}
+	s.account(key, len(cb))
 	cname := fmt.Sprintf("%06d.lat8", m.RoundSeq)
 	if err := writeAtomic(filepath.Join(dir, "history", cname), cb, 0o600); err != nil {
 		return err
@@ -500,6 +538,39 @@ func seqOf(name string) uint64 {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
 	v, _ := strconv.ParseUint(base, 10, 64)
 	return v
+}
+
+// SaveFreshness records, per segment, when this tool last read it successfully.
+//
+// It is one uint32 of Unix seconds per segment: 1912 segments for the reference
+// stick, so 7.6 KiB rewritten once per pass. Segments the pass skipped keep
+// their old timestamp, which is the whole point -- the map is meant to show
+// what has NOT been refreshed lately.
+func (s *Store) SaveFreshness(key string, ages []uint32) error {
+	if _, err := s.ensureDisk(key); err != nil {
+		return err
+	}
+	b := make([]byte, len(ages)*4)
+	for i, v := range ages {
+		binary.LittleEndian.PutUint32(b[i*4:], v)
+	}
+	s.account(key, len(b))
+	return writeAtomic(filepath.Join(s.diskDir(key), "freshness.bin"), b, 0o600)
+}
+
+func (s *Store) LoadFreshness(key string) ([]uint32, error) {
+	b, err := os.ReadFile(filepath.Join(s.diskDir(key), "freshness.bin"))
+	if os.IsNotExist(err) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint32, len(b)/4)
+	for i := range out {
+		out[i] = binary.LittleEndian.Uint32(b[i*4:])
+	}
+	return out, nil
 }
 
 // ListDisks returns every key the store knows about, including ones not

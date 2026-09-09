@@ -3,6 +3,7 @@ package reclaimd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -293,6 +294,7 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 	if err := s.store.AppendRound(key, res.Summary); err != nil {
 		s.logger.Error("append round", "disk", key, "error", err)
 	}
+	s.updateFreshness(key, res)
 
 	s.mu.Lock()
 	prev := st.Schedule.Interval
@@ -339,6 +341,17 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 		},
 	})
 
+	// Fold this pass's own writes into the durable total. The SaveMeta below is
+	// itself a write and lands in the next pass's tally, which is a rounding
+	// error against a number meant to be read as "a few megabytes a year".
+	s.mu.Lock()
+	st.Meta.BytesWritten += s.store.TakeBytesWritten(key)
+	meta := st.Meta
+	s.mu.Unlock()
+	if err := s.store.SaveMeta(key, meta); err != nil {
+		s.logger.Error("save meta", "disk", key, "error", err)
+	}
+
 	s.logger.Info("scan finished", "disk", key,
 		"outcome", res.Summary.Outcome,
 		"slow_n", res.Summary.SlowBlocks,
@@ -346,6 +359,122 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 		"drop_n", res.Summary.Dropouts,
 		"healed_n", res.Summary.Healed,
 		"next_scan_at", sched.NextScanAt)
+}
+
+// updateFreshness stamps every segment this pass actually read.
+//
+// Segments that were skipped keep their previous timestamp on purpose: the map
+// exists to show what has NOT been refreshed lately, and quietly resetting a
+// deferred segment would hide exactly the thing worth seeing.
+//
+// The result is a lower bound on freshness, never an upper one. Reads performed
+// by whatever filesystem lives on the disk refresh data too, and they are
+// invisible from down here at the raw device.
+func (s *Supervisor) updateFreshness(key string, res RoundResult) {
+	perSeg := s.cfg.BlocksPerSegment()
+	if perSeg <= 0 || res.Latency == nil {
+		return
+	}
+	segs := (len(res.Latency.Values) + perSeg - 1) / perSeg
+	ages, err := s.store.LoadFreshness(key)
+	if err != nil || len(ages) != segs {
+		ages = make([]uint32, segs)
+	}
+	now := uint32(time.Now().Unix())
+	for seg := 0; seg < segs; seg++ {
+		lo := seg * perSeg
+		hi := lo + perSeg
+		if hi > len(res.Latency.Values) {
+			hi = len(res.Latency.Values)
+		}
+		for _, v := range res.Latency.Values[lo:hi] {
+			if _, ok := DecodeLatency(v); ok {
+				ages[seg] = now
+				break
+			}
+		}
+	}
+	if err := s.store.SaveFreshness(key, ages); err != nil {
+		s.logger.Error("save freshness", "disk", key, "error", err)
+	}
+}
+
+// ScanOnce runs a single pass synchronously and returns its summary. It is what
+// the scan command drives, and it obeys every rule the daemon obeys --
+// suppression included, because a manual run is impatience, not a reason to
+// re-enter a window opened by the disk taking a filesystem down.
+func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (RoundSummary, error) {
+	found, err := DiscoverUSBDisks(s.roots)
+	if err != nil {
+		return RoundSummary{}, err
+	}
+	var p Presence
+	ok := false
+	for _, d := range found {
+		if d.Identity.Key == key || d.KernelName == key || d.Node == key {
+			if d.Ignored {
+				return RoundSummary{}, fmt.Errorf("%w: %s", ErrNotFound, d.IgnoredReason)
+			}
+			p, ok = d, true
+			break
+		}
+	}
+	if !ok {
+		return RoundSummary{}, fmt.Errorf("%w: %s", ErrNotFound, key)
+	}
+	key = p.Identity.Key
+
+	meta, err := s.store.LoadMeta(key)
+	if errors.Is(err, ErrNotFound) {
+		meta = Meta{Identity: p.Identity, FirstSeen: time.Now(), Enabled: true, AdoptedAt: time.Now()}
+		if err := s.store.SaveMeta(key, meta); err != nil {
+			return RoundSummary{}, err
+		}
+	} else if err != nil {
+		return RoundSummary{}, err
+	}
+
+	sched, err := s.store.LoadSchedule(key)
+	if errors.Is(err, ErrNotFound) {
+		sched = NewSchedule(s.cfg, time.Now())
+	} else if err != nil {
+		return RoundSummary{}, err
+	}
+	if !force && time.Now().Before(sched.SuppressUntil) {
+		return RoundSummary{}, ErrScanSuppressed
+	}
+
+	st := &diskState{Key: key, Presence: p, Meta: meta, Schedule: sched, Present: true}
+	s.mu.Lock()
+	s.disks[key] = st
+	s.mu.Unlock()
+
+	dev, err := OpenDevice(p, s.cfg.BlockSize, s.roots)
+	if err != nil {
+		return RoundSummary{}, err
+	}
+	defer dev.Close()
+	if err := dev.WarmUp(ctx, s.cfg.WarmupDiscard); err != nil {
+		return RoundSummary{}, err
+	}
+
+	in := RoundInput{Key: key, Dev: dev, Presence: p, Schedule: sched,
+		Ext: NewExternalIOMonitor(s.cfg, s.roots, p)}
+	if bits, err := s.store.LoadDeferred(key); err == nil {
+		in.Deferred = bits
+	}
+	in.OnProgress = func(pr LiveProgress) {
+		s.logger.Info("scan progress", "disk", key, "pos_mib", pr.PosMiB,
+			"total_mib", pr.TotalMiB, "mib_s", pr.SpeedMiBs, "slow_n", pr.SlowN,
+			"danger_n", pr.DangerN, "drift_n", pr.DriftN)
+	}
+
+	res, err := s.scanner.Round(ctx, in)
+	if err != nil {
+		return res.Summary, err
+	}
+	s.persistRound(st, res)
+	return res.Summary, nil
 }
 
 func (s *Supervisor) setErr(st *diskState, err error) {

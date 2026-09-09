@@ -2,6 +2,7 @@ package reclaimd
 
 import (
 	"embed"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -94,6 +95,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/disks/{key}/rounds", s.handleRounds)
 	mux.HandleFunc("GET /api/v1/disks/{key}/events", s.handleEvents)
 	mux.HandleFunc("GET /api/v1/disks/{key}/profile", s.handleProfile)
+	mux.HandleFunc("GET /api/v1/disks/{key}/freshness", s.handleFreshness)
 	mux.HandleFunc("POST /api/v1/disks/{key}/enabled", s.handleEnabled)
 	mux.HandleFunc("POST /api/v1/disks/{key}/scan", s.handleScan)
 	mux.HandleFunc("GET /api/v1/stream", s.handleStream)
@@ -227,6 +229,23 @@ func (s *Server) views(detail bool) []DiskView {
 
 		rounds, _ := s.store.ListRounds(st.Key, 60)
 		v.Health = assessHealth(rounds, s.cfg)
+		if ages, err := s.store.LoadFreshness(st.Key); err == nil && len(ages) > 0 {
+			oldest := uint32(0)
+			now := uint32(time.Now().Unix())
+			first := true
+			for _, a := range ages {
+				if a == 0 {
+					continue // never read; counted separately by the UI
+				}
+				if first || a < oldest {
+					oldest, first = a, false
+				}
+			}
+			if !first {
+				v.OldestDataS = float64(now - oldest)
+			}
+		}
+		v.IntervalS = sched.Interval.Duration().Seconds()
 		for _, r := range rounds {
 			v.TotalHealed += r.Healed
 		}
@@ -298,6 +317,29 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
+}
+
+// handleFreshness serves one uint32 of Unix seconds per segment.
+//
+// Unlike a completed pass this changes every round, so it is never cached.
+func (s *Server) handleFreshness(w http.ResponseWriter, r *http.Request) {
+	ages, err := s.store.LoadFreshness(r.PathValue("key"))
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no freshness data")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	b := make([]byte, len(ages)*4)
+	for i, v := range ages {
+		binary.LittleEndian.PutUint32(b[i*4:], v)
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(b)
 }

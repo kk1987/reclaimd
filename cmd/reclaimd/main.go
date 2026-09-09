@@ -37,6 +37,7 @@ usage: reclaimd <command> [flags]
 
 commands:
   daemon    discover, adopt, schedule, scan, and serve the status page
+  scan      one pass over one disk now; the outcome is the exit code
   list      every USB disk visible, and the key each is filed under
   export    dump all stored state as JSON
   refresh   rewrite a disk in place, behind four gates
@@ -80,6 +81,18 @@ func main() {
 		// procd restarts a service that exits 0, so a daemon that has finished
 		// for any recoverable reason must still report failure.
 		os.Exit(1)
+
+	case "scan":
+		fs, common := newCommand(cmd)
+		disk := fs.String("disk", "", "disk key or /dev node (required)")
+		force := fs.Bool("i-mean-it", false, "scan inside a post-dropout suppression window")
+		_ = fs.Parse(args)
+		cfg, logger := common.load()
+		if *disk == "" {
+			logger.Error("-disk is required for scan")
+			os.Exit(1)
+		}
+		os.Exit(runScan(cfg, logger, *disk, *force))
 
 	case "export":
 		fs, common := newCommand(cmd)
@@ -166,6 +179,48 @@ func (c *commonFlags) load() (reclaimd.Config, *slog.Logger) {
 	return cfg, slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: parseLevel(cfg.LogLevel),
 	}))
+}
+
+// runScan performs one pass and reports the outcome through the exit code, so a
+// cron entry or a shell script can act on it without parsing the log.
+func runScan(cfg reclaimd.Config, logger *slog.Logger, disk string, force bool) int {
+	store, err := reclaimd.OpenStore(cfg.StateDir, logger)
+	if err != nil {
+		logger.Error("open store", "error", err)
+		return 1
+	}
+	defer store.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		cancel()
+	}()
+
+	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultRoots())
+	sum, err := sup.ScanOnce(ctx, disk, force)
+	if err != nil {
+		logger.Error("scan failed", "error", err, "disk", disk)
+		return 1
+	}
+	logger.Info("scan complete", "disk", disk, "outcome", sum.Outcome,
+		"slow_n", sum.SlowBlocks, "danger_n", sum.DangerBlocks,
+		"drop_n", sum.Dropouts, "healed_n", sum.Healed,
+		"read_mib", sum.BytesRead>>20)
+
+	switch sum.Outcome {
+	case reclaimd.OutcomeClean:
+		return 0
+	case reclaimd.OutcomeDropout, reclaimd.OutcomeNearHang:
+		return 3
+	case reclaimd.OutcomeSlow, reclaimd.OutcomeMediaErrors:
+		return 2
+	default:
+		return 0
+	}
 }
 
 // runExport dumps everything the daemon knows without touching a device, so it

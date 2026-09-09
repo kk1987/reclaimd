@@ -77,6 +77,10 @@ type DiskView struct {
 	// are invisible from the raw device, so this is a lower bound on freshness,
 	// never an upper one.
 	OldestDataS float64 `json:"oldest_data_s,omitempty"`
+	// IntervalS lets the freshness map key its colours to this disk's own
+	// current interval rather than to absolute days, so the map keeps reading
+	// as "are we behind?" no matter how the schedule has adapted.
+	IntervalS float64 `json:"interval_s,omitempty"`
 }
 
 // assessHealth walks the ladder from worst to best and stops at the first rule
