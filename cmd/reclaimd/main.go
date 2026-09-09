@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"reclaimd/internal/reclaimd"
+	"github.com/kk1987/reclaimd/internal/reclaimd"
 )
 
 // Set via -ldflags at build time.
