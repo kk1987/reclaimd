@@ -227,12 +227,23 @@ func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskId
 		})
 	}
 
+	// The cooldown has two causes with two lengths -- 6h after a near-hang, 24h
+	// after a dropout -- and this row used to report both as a dropout. Telling
+	// somebody their drive fell off the bus when it did not is the worst thing
+	// a diagnostic can do: it is a hardware event they will go looking for in
+	// dmesg and not find.
 	suppressed := time.Now().Before(sched.SuppressUntil)
-	sup := Controller{ID: "dropout_cooldown", Unit: "h", Reason: "NOT_TRIGGERED", Value: 0}
+	sup := Controller{ID: "cooldown", Unit: "h", Reason: "NOT_TRIGGERED", Value: 0}
 	if suppressed {
 		sup.Value = round2(time.Until(sched.SuppressUntil).Hours())
-		sup.Reason = "SUPPRESSED_AFTER_DROPOUT"
-		sup.Params = map[string]any{"until_ts": sched.SuppressUntil.Unix()}
+		sup.Reason = "SUPPRESSED_AFTER_NEAR_HANG"
+		if sched.LastOutcome == OutcomeDropout {
+			sup.Reason = "SUPPRESSED_AFTER_DROPOUT"
+		}
+		sup.Params = map[string]any{
+			"until_ts": sched.SuppressUntil.Unix(),
+			"outcome":  sched.LastOutcome,
+		}
 	}
 	out = append(out, sup)
 

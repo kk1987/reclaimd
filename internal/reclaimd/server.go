@@ -370,7 +370,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// disk just took a filesystem down with it, and impatience is not a
 		// reason to go back in early.
 		writeError(w, http.StatusConflict, CodeScanSuppressed,
-			"disk is in its post-dropout cooldown")
+			"disk is in the cooldown window the last round opened")
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
 	case err != nil:
