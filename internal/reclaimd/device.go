@@ -159,12 +159,15 @@ func (d *Device) classify(err error) error {
 // A suspend/resume cycle ("root hub lost power or was reset") produces a
 // transient EIO with all three of these still true. Treating that as a dropout
 // would suppress scanning for 24 hours every time the laptop lid closes.
-func (d *Device) sysfsAlive() bool {
-	sys := d.presence.SysPath
-	if readSysInt(filepath.Join(sys, "size"))*sectorSize != d.presence.Identity.SizeBytes {
+func (d *Device) sysfsAlive() bool { return presenceAlive(d.presence) }
+
+// presenceAlive is the same test as a free function, because the refresh
+// command needs it too and has no Device to hang it off.
+func presenceAlive(p Presence) bool {
+	if readSysInt(filepath.Join(p.SysPath, "size"))*sectorSize != p.Identity.SizeBytes {
 		return false
 	}
-	if st := readSysString(filepath.Join(sys, "device", "state")); st != "" && st != "running" {
+	if st := readSysString(filepath.Join(p.SysPath, "device", "state")); st != "" && st != "running" {
 		return false
 	}
 	return true

@@ -129,16 +129,77 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 		maxDrops = 8
 	}
 
-	var written, skipped, drops int64
+	// The reopener is what makes a dropout survivable: it waits for the same
+	// identity to come back and hands the loop a fresh exclusive handle, under
+	// whatever device name the kernel picked this time.
+	reopen := func(ctx context.Context) (refreshTarget, error) {
+		np, err := WaitForReattach(ctx, roots, p.Identity, cfg.BlockSize,
+			cfg.ReattachTimeout.Duration())
+		if err != nil {
+			return nil, fmt.Errorf("device did not return after a refresh dropout: %w", err)
+		}
+		p = np
+		nf, err := os.OpenFile(p.Node,
+			os.O_RDWR|syscall.O_EXCL|syscall.O_DIRECT|syscall.O_CLOEXEC, 0)
+		if err != nil {
+			return nil, fmt.Errorf("reopen %s after dropout: %w", p.Node, err)
+		}
+		return nf, nil
+	}
+
 	t0 := time.Now()
+	alive := func() bool { return presenceAlive(p) }
+	st, err := rewriteRange(ctx, logger, f, reopen, alive, buf, start, end, blockSize,
+		opts.Mode == RefreshRewrite, maxDrops)
+	if err != nil {
+		return err
+	}
+	logger.Info("refresh complete", "disk", p.Identity.Key,
+		"written_mib", st.Written>>20, "skipped_blocks", st.Skipped,
+		"dropouts_n", st.Dropouts, "elapsed_s", time.Since(t0).Seconds())
+	return nil
+}
+
+// refreshTarget is the seam the rewrite loop is tested through.
+//
+// A dropout in the middle of a whole-drive rewrite cannot be staged against
+// real hardware, and it is the one path where getting the recovery wrong leaves
+// a drive half-rewritten -- worse than either finishing or never starting. So
+// the loop talks to an interface and the test supplies a device that fails
+// where it likes.
+type refreshTarget interface {
+	ReadAt(p []byte, off int64) (int, error)
+	WriteAt(p []byte, off int64) (int, error)
+	Sync() error
+	Close() error
+}
+
+// reopenFunc yields a fresh handle once the device is back on the bus.
+type reopenFunc func(ctx context.Context) (refreshTarget, error)
+
+type refreshStats struct {
+	Written  int64
+	Skipped  int64
+	Dropouts int64
+}
+
+// rewriteRange walks the range once, reopening around dropouts. It owns the
+// target's lifetime from here on and closes it on every path out.
+func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
+	reopen reopenFunc, alive func() bool, buf []byte, start, end, blockSize int64,
+	rewrite bool, maxDrops int) (refreshStats, error) {
+
+	var st refreshStats
+	t0 := time.Now()
+
 	for off := start; off < end; off += blockSize {
 		if err := ctx.Err(); err != nil {
-			f.Close()
-			return err
+			tgt.Close()
+			return st, err
 		}
-		if opts.Mode == RefreshRewrite {
-			if _, err := f.ReadAt(buf, off); err != nil {
-				if isDisconnect(err) {
+		if rewrite {
+			if _, err := tgt.ReadAt(buf, off); err != nil {
+				if isDisconnect(err, alive) {
 					goto dropped
 				}
 				// Gate 4, and the most important line in this file. Writing back
@@ -147,73 +208,73 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 				// whole program exists to prevent.
 				logger.Warn("read failed; leaving this block untouched",
 					"offset", off, "error", err)
-				skipped++
+				st.Skipped++
 				continue
 			}
 		}
-		if _, err := f.WriteAt(buf, off); err != nil {
-			if isDisconnect(err) {
+		if _, err := tgt.WriteAt(buf, off); err != nil {
+			if isDisconnect(err, alive) {
 				goto dropped
 			}
-			f.Close()
-			return fmt.Errorf("write at %d: %w", off, err)
+			tgt.Close()
+			return st, fmt.Errorf("write at %d: %w", off, err)
 		}
-		written += blockSize
+		st.Written += blockSize
 
-		if written%(1<<30) == 0 {
-			logger.Info("refresh progress", "written_gib", written>>30,
-				"mib_s", float64(written>>20)/time.Since(t0).Seconds())
+		if st.Written%(1<<30) == 0 {
+			logger.Info("refresh progress", "written_gib", st.Written>>30,
+				"mib_s", float64(st.Written>>20)/time.Since(t0).Seconds())
 		}
 		continue
 
 	dropped:
-		// Writing can take this controller off the bus just as reading can. The
-		// device comes back on its own within a couple of seconds, so a whole
-		// -drive rewrite has to be able to pick up where it left off; giving up
-		// here would leave the drive part-rewritten, which is worse than either
-		// finishing or never starting.
-		drops++
-		f.Close()
+		// Writing takes this controller off the bus just as reading does, and it
+		// comes back on its own within a couple of seconds. A whole-drive
+		// rewrite therefore has to pick up where it left off.
+		st.Dropouts++
+		tgt.Close()
 		logger.Warn("device dropped off the bus during refresh",
-			"offset", off, "dropouts_n", drops, "code", CodeDeviceDisconnected)
-		if drops > int64(maxDrops) {
-			return fmt.Errorf("%w: %d dropouts, giving up at offset %d",
-				ErrDeviceDisconnected, drops, off)
+			"offset", off, "dropouts_n", st.Dropouts, "code", CodeDeviceDisconnected)
+		if st.Dropouts > int64(maxDrops) {
+			return st, fmt.Errorf("%w: %d dropouts, giving up at offset %d",
+				ErrDeviceDisconnected, st.Dropouts, off)
 		}
-		np, rerr := WaitForReattach(ctx, roots, p.Identity, cfg.BlockSize,
-			cfg.ReattachTimeout.Duration())
-		if rerr != nil {
-			return fmt.Errorf("device did not return after a refresh dropout: %w", rerr)
-		}
-		p = np
-		f, err = os.OpenFile(p.Node,
-			os.O_RDWR|syscall.O_EXCL|syscall.O_DIRECT|syscall.O_CLOEXEC, 0)
+		next, err := reopen(ctx)
 		if err != nil {
-			return fmt.Errorf("reopen %s after dropout: %w", p.Node, err)
+			return st, err
 		}
-		logger.Info("resuming refresh", "node", p.Node, "offset", off)
+		tgt = next
+		logger.Info("resuming refresh", "offset", off)
 		// Retry the block that dropped us rather than skipping it: the write
-		// never landed, so skipping would leave a hole in the refresh.
+		// never landed, so skipping it would leave a hole in the very refresh
+		// being performed.
 		off -= blockSize
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return fmt.Errorf("sync: %w", err)
+
+	if err := tgt.Sync(); err != nil {
+		tgt.Close()
+		return st, fmt.Errorf("sync: %w", err)
 	}
-	f.Close()
-	logger.Info("refresh complete", "disk", p.Identity.Key,
-		"written_mib", written>>20, "skipped_blocks", skipped,
-		"dropouts_n", drops, "elapsed_s", time.Since(t0).Seconds())
-	return nil
+	tgt.Close()
+	return st, nil
 }
 
-// isDisconnect recognises the device leaving the bus mid-write. ENODEV and
-// ENXIO are unambiguous; EIO is not, but during a whole-drive rewrite the
-// difference does not change what we do -- reattach and carry on either way.
-func isDisconnect(err error) bool {
-	return errors.Is(err, syscall.ENODEV) ||
-		errors.Is(err, syscall.ENXIO) ||
-		errors.Is(err, syscall.EIO)
+// isDisconnect recognises the device leaving the bus mid-rewrite.
+//
+// ENODEV and ENXIO are unambiguous. EIO is not: it covers both a vanished
+// device and a single sector that will not read, and the two need opposite
+// responses. Treating every EIO as a dropout means one bad sector burns the
+// whole dropout budget -- close, reattach, retry the same block, fail again --
+// and aborts a refresh that should simply have stepped over it. So EIO asks
+// sysfs, which answers without touching the bus, exactly as the scanner does.
+func isDisconnect(err error, alive func() bool) bool {
+	switch {
+	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ENXIO):
+		return true
+	case errors.Is(err, syscall.EIO):
+		return alive == nil || !alive()
+	}
+	return false
 }
 
 // assertNotInUse checks the mount and swap tables for the disk and every
