@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      # The daemon is concurrent throughout — supervisor, scanner and the SSE
+      # hub all share state — so the race detector is the point of this job.
+      # It needs cgo, which the shipped binaries deliberately do not use.
+      - name: test
+        run: go test -race -count=1 ./...
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # build.sh calls git describe for the version string
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: cross-compile
+        run: ./build.sh

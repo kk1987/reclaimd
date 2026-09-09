@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # build.sh calls git describe for the version string
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: test
+        run: go test -count=1 ./...
+
+      - name: build
+        run: ./build.sh
+
+      # Assets carry the tag so two releases do not collide in a download
+      # folder, and SHA256SUMS covers what a router pulls over plain HTTP.
+      - name: package
+        run: |
+          cd out
+          for f in reclaimd-linux-*; do
+            mv "$f" "${f/reclaimd-/reclaimd-${GITHUB_REF_NAME}-}"
+          done
+          sha256sum reclaimd-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag out/*

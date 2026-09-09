@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Go modules are deliberately absent — reclaimd has no third-party
+  # dependencies — so the only thing here that can go stale is the CI actions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
