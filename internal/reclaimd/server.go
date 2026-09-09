@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -219,6 +220,7 @@ func (s *Server) views(detail bool) []DiskView {
 		if !st.Schedule.SuppressUntil.IsZero() {
 			v.SuppressTs = st.Schedule.SuppressUntil.Unix()
 		}
+		v.LastOutcome = st.Schedule.LastOutcome
 		v.BytesWritten = st.Meta.BytesWritten
 		if st.Live != nil {
 			live := *st.Live
@@ -360,7 +362,18 @@ func (s *Server) handleEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
-	err := s.sup.RequestScan(r.PathValue("key"))
+	// Named after the CLI flag rather than something tidier like "force". The
+	// awkwardness is the point in both places: this clears a window that the
+	// last round opened because the disk misbehaved.
+	var body struct {
+		IMeanIt bool `json:"i_mean_it"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil &&
+		!errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	err := s.sup.RequestScan(r.PathValue("key"), body.IMeanIt)
 	switch {
 	case errors.Is(err, ErrScanInProgress):
 		writeError(w, http.StatusConflict, CodeScanInProgress,

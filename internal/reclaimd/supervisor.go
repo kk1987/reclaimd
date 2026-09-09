@@ -511,7 +511,7 @@ func (s *Supervisor) SetEnabled(key string, enabled bool) error {
 // RequestScan asks for a round now. Suppression still applies: the escape hatch
 // is for impatience, not for overriding a safety window that exists because the
 // disk just took a filesystem down with it.
-func (s *Supervisor) RequestScan(key string) error {
+func (s *Supervisor) RequestScan(key string, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.disks[key]
@@ -525,8 +525,29 @@ func (s *Supervisor) RequestScan(key string) error {
 		// round ends, so the request was discarded either way.
 		return ErrScanInProgress
 	}
-	if time.Now().Before(st.Schedule.SuppressUntil) {
-		return ErrScanSuppressed
+	if left := time.Until(st.Schedule.SuppressUntil); left > 0 {
+		// force is the same escape hatch `scan -i-mean-it` has always had,
+		// reachable from the UI now rather than only over ssh. It clears the
+		// cooldown and nothing else, and it says so where it can be read back:
+		// overriding a window that exists because the disk misbehaved is a
+		// decision worth finding again later, next to whatever happened next.
+		if !force {
+			return ErrScanSuppressed
+		}
+		s.logger.Warn("cooldown overridden by request",
+			"disk", key, "outcome", st.Schedule.LastOutcome,
+			"remaining_h", left.Hours())
+		_ = s.store.AppendEvent(key, Event{
+			Type: EventOverride,
+			Params: map[string]any{
+				"outcome":     st.Schedule.LastOutcome,
+				"remaining_h": round2(left.Hours()),
+			},
+		})
+		st.Schedule.SuppressUntil = time.Time{}
+		if err := s.store.SaveSchedule(key, st.Schedule); err != nil {
+			s.logger.Error("save schedule after override", "disk", key, "error", err)
+		}
 	}
 	st.Schedule.NextScanAt = time.Now()
 	return nil

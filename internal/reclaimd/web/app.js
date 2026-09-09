@@ -221,11 +221,22 @@ function renderDiskbar() {
         await api.requestScan(d.key);
         await refreshAll();
       } catch (err) {
-        /* A refusal here is the suppression window doing its job, so say so
-           rather than showing a bare error. */
-        toast(err.code === 'SCAN_SUPPRESSED' ? I.t('toast.suppressed')
-          : err.code === 'SCAN_IN_PROGRESS' ? I.t('disk.scanRunning')
-          : err.message);
+        if (err.code === 'SCAN_IN_PROGRESS') { toast(I.t('disk.scanRunning')); return; }
+        if (err.code !== 'SCAN_SUPPRESSED') { toast(err.message); return; }
+        /* The refusal is the window doing its job, so the way past it is a
+           second, separate act rather than a retry of the same click: the
+           dialog names what opened the window and how much of it is left, and
+           the override is recorded as an event either way. */
+        const left = d.suppress_until_ts
+          ? I.fmtDur(d.suppress_until_ts - Math.floor(Date.now() / 1000)) : '';
+        const why = I.t(d.last_outcome === 'dropout'
+          ? 'reason.SUPPRESSED_AFTER_DROPOUT' : 'reason.SUPPRESSED_AFTER_NEAR_HANG');
+        if (!confirm(I.t('confirm.override', { left, why }))) return;
+        try {
+          await api.requestScan(d.key, true);
+          toast(I.t('toast.overridden'));
+          await refreshAll();
+        } catch (e2) { toast(e2.message); }
       }
     });
     el.querySelector('[data-toggle]').addEventListener('click', async (ev) => {

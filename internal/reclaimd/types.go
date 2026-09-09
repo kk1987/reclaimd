@@ -106,6 +106,7 @@ const (
 	EventInterval  = "INTERVAL_CHANGE"
 	EventAdopted   = "ADOPTED"
 	EventResumed   = "PASS_RESUMED"
+	EventOverride  = "COOLDOWN_OVERRIDDEN"
 )
 
 // Event is one line of events.jsonl. Params carries the structured values the

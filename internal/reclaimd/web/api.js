@@ -51,8 +51,10 @@ export async function setEnabled(key, enabled) {
   return post(`/disks/${encodeURIComponent(key)}/enabled`, { enabled });
 }
 
-export async function requestScan(key) {
-  return post(`/disks/${encodeURIComponent(key)}/scan`, {});
+/* iMeanIt clears the cooldown the last round opened. Named after the CLI flag
+   it mirrors, and awkward in both places on purpose. */
+export async function requestScan(key, iMeanIt = false) {
+  return post(`/disks/${encodeURIComponent(key)}/scan`, { i_mean_it: iMeanIt });
 }
 
 async function post(path, body) {

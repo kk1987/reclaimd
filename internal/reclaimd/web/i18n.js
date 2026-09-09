@@ -53,7 +53,7 @@ export const DICT = {
     'reason.DRIFT_RESTING': '漂移 {drift}×（阈值 {threshold}×），正在歇。',
     'reason.NOT_TRIGGERED': '未触发。',
     'reason.SUPPRESSED_AFTER_DROPOUT': '上一轮掉了线，冷却中——盘从 USB 总线上掉下去过。',
-    'reason.SUPPRESSED_AFTER_NEAR_HANG': '上一轮读到接近卡死的块，冷却中。这不是掉线——盘全程都在 USB 总线上。',
+    'reason.SUPPRESSED_AFTER_NEAR_HANG': '上一轮读到接近卡死的块，冷却中。',
 
     'live.title': '正在扫描',
     'live.pos': '位置', 'live.speed': '速度', 'live.drift': '延迟漂移',
@@ -101,6 +101,7 @@ export const DICT = {
     'event.HEALED': '已治愈', 'event.STILL_SLOW': '仍然慢', 'event.MEDIA_ERROR': '介质错误',
     'event.DEFER': '退避', 'event.ROUND': '轮次结束', 'event.INTERVAL_CHANGE': '间隔变更',
     'event.ADOPTED': '纳入维护', 'event.PASS_RESUMED': '续扫',
+    'event.COOLDOWN_OVERRIDDEN': '手动跳过冷却',
     'event.at': '位于 {off}',
 
     'disk.absent': '未插入', 'disk.scanning': '扫描中', 'disk.disabled': '已排除',
@@ -114,6 +115,8 @@ export const DICT = {
     'foot.written': '本工具至今向此盘写入 {written}',
     'toast.enabled': '已纳入维护', 'toast.disabled': '已排除',
     'toast.suppressed': '上一轮之后还在冷却，暂不扫描',
+    'toast.overridden': '已跳过冷却，这一轮马上开始',
+    'confirm.override': '冷却还剩 {left}。\n\n{why}\n\n跳过它，现在就扫吗？',
     'unit.d': '{n} 天', 'unit.h': '{n} 小时', 'unit.m': '{n} 分', 'unit.s': '{n} 秒',
     'none': '无',
   },
@@ -167,7 +170,7 @@ export const DICT = {
     'reason.DRIFT_RESTING': 'Drift {drift}× (threshold {threshold}×), resting.',
     'reason.NOT_TRIGGERED': 'Not triggered.',
     'reason.SUPPRESSED_AFTER_DROPOUT': 'Cooling down after a dropout: the drive left the USB bus.',
-    'reason.SUPPRESSED_AFTER_NEAR_HANG': 'Cooling down after a near-hang. Not a dropout: the drive stayed on the USB bus throughout.',
+    'reason.SUPPRESSED_AFTER_NEAR_HANG': 'Cooling down after a near-hang.',
 
     'live.title': 'Scanning',
     'live.pos': 'Position', 'live.speed': 'Speed', 'live.drift': 'Latency drift',
@@ -215,6 +218,7 @@ export const DICT = {
     'event.HEALED': 'Healed', 'event.STILL_SLOW': 'Still slow', 'event.MEDIA_ERROR': 'Media error',
     'event.DEFER': 'Deferred', 'event.ROUND': 'Pass finished', 'event.INTERVAL_CHANGE': 'Interval changed',
     'event.ADOPTED': 'Adopted', 'event.PASS_RESUMED': 'Pass resumed',
+    'event.COOLDOWN_OVERRIDDEN': 'Cooldown overridden',
     'event.at': 'at {off}',
 
     'disk.absent': 'not present', 'disk.scanning': 'scanning', 'disk.disabled': 'excluded',
@@ -228,6 +232,8 @@ export const DICT = {
     'foot.written': 'This tool has written {written} to this drive so far',
     'toast.enabled': 'Now maintained', 'toast.disabled': 'Excluded',
     'toast.suppressed': 'Cooling down after the last round; not scanning',
+    'toast.overridden': 'Cooldown cleared; the round starts now',
+    'confirm.override': '{left} of the cooldown left.\n\n{why}\n\nSkip it and scan now?',
     'unit.d.one': '{n} day', 'unit.d.other': '{n} days',
     'unit.h.one': '{n} hour', 'unit.h.other': '{n} hours',
     'unit.m.one': '{n} min', 'unit.m.other': '{n} min',

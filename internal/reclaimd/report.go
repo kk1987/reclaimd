@@ -53,18 +53,23 @@ type Controller struct {
 
 // DiskView is the whole per-disk payload the browser renders.
 type DiskView struct {
-	Key         string         `json:"key"`
-	Identity    DiskIdentity   `json:"identity"`
-	Present     bool           `json:"present"`
-	KernelName  string         `json:"kernel_name,omitempty"`
-	Enabled     bool           `json:"enabled"`
-	Adopted     bool           `json:"adopted"`
-	AdoptedAtTs int64          `json:"adopted_at_ts,omitempty"`
-	Scanning    bool           `json:"scanning"`
-	Health      Health         `json:"health"`
-	NextScanTs  int64          `json:"next_scan_ts,omitempty"`
-	LastScanTs  int64          `json:"last_scan_ts,omitempty"`
-	SuppressTs  int64          `json:"suppress_until_ts,omitempty"`
+	Key         string       `json:"key"`
+	Identity    DiskIdentity `json:"identity"`
+	Present     bool         `json:"present"`
+	KernelName  string       `json:"kernel_name,omitempty"`
+	Enabled     bool         `json:"enabled"`
+	Adopted     bool         `json:"adopted"`
+	AdoptedAtTs int64        `json:"adopted_at_ts,omitempty"`
+	Scanning    bool         `json:"scanning"`
+	Health      Health       `json:"health"`
+	NextScanTs  int64        `json:"next_scan_ts,omitempty"`
+	LastScanTs  int64        `json:"last_scan_ts,omitempty"`
+	SuppressTs  int64        `json:"suppress_until_ts,omitempty"`
+	// LastOutcome is what the previous round graded, which is what says
+	// whether a cooldown in progress is the six-hour kind or the
+	// twenty-four-hour kind -- and the difference is worth showing before
+	// anyone is offered the chance to skip it.
+	LastOutcome string         `json:"last_outcome,omitempty"`
 	Controllers []Controller   `json:"controllers,omitempty"`
 	Rounds      []RoundSummary `json:"rounds,omitempty"`
 	Live        *LiveProgress  `json:"live,omitempty"`
