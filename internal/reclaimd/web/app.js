@@ -16,11 +16,39 @@ const state = {
   stack: [],
   freshness: null,
   stackMode: 'abs',
+  /* Disks whose scan has been asked for but has not started yet. The request
+     only moves next_scan_at; the round begins on the daemon's next enumeration
+     tick, and until then the disk still reports scanning:false. Without this,
+     the button that sent the request is live again the moment the reply lands
+     and the same round gets asked for two or three times. */
+  scanRequested: new Map(), // key -> ms timestamp the wait gives up at
 };
 
 /* Blocks per superblock. The daemon's own segment size is 32 MiB at 1 MiB
    blocks; the mod histogram and the stubborn-region scan both key off it. */
 const BLOCKS_PER_SEGMENT = 32;
+
+/* The daemon enumerates every 30 seconds, so a requested round can be that long
+   in coming. Three ticks is the outside case; past that the request went
+   nowhere -- the stick was pulled, maintenance was switched off -- and the
+   button is better back than dead. */
+const SCAN_REQUEST_GRACE_MS = 90_000;
+
+function markScanRequested(key) {
+  state.scanRequested.set(key, Date.now() + SCAN_REQUEST_GRACE_MS);
+}
+
+/* A request is spent once the round it asked for is running, and equally once
+   nothing can start: no such disk, gone, or no longer maintained. */
+function reapScanRequests() {
+  const now = Date.now();
+  for (const [key, until] of state.scanRequested) {
+    const d = state.disks.find((x) => x.key === key);
+    if (!d || d.scanning || !d.present || !d.enabled || now > until) {
+      state.scanRequested.delete(key);
+    }
+  }
+}
 
 /* ---------------------------------------------------------------- boot ---- */
 
@@ -31,7 +59,14 @@ async function boot() {
   connect({
     onHello: (d) => { if (d.disks) { state.disks = d.disks; renderDiskbar(); } setConn('live'); },
     onProgress: onProgress,
-    onState: () => refreshDetail(true),
+    onState: async () => {
+      /* Scanning on or off is exactly what these events report, and the disk
+         card draws that from the list rather than from the detail. Refreshing
+         only the detail leaves the card saying Scanning after the round ended,
+         and its button disabled with it. */
+      try { state.disks = await api.getDisks(); } catch (e) { /* below reports */ }
+      await refreshDetail(true);
+    },
     onResync: () => refreshAll(),
     onStatus: setConn,
   });
@@ -160,6 +195,7 @@ function renderAll() {
 function renderDiskbar() {
   const bar = $('diskbar');
   bar.innerHTML = '';
+  reapScanRequests();
   for (const d of state.disks) {
     const el = document.createElement('article');
     el.className = 'diskcard';
@@ -184,8 +220,10 @@ function renderDiskbar() {
        and did nothing. There is no stop: a round backs off on its own terms,
        and cutting one short mid-pread is not something a button should offer. */
     const scanning = d.scanning;
-    const scannable = d.present && d.enabled && !scanning;
+    const requested = state.scanRequested.has(d.key);
+    const scannable = d.present && d.enabled && !scanning && !requested;
     const scanTitle = scanning ? 'disk.scanRunning'
+      : requested ? 'disk.scanQueued'
       : !d.present ? 'disk.absent'
       : !d.enabled ? 'disk.scanNeedsMaintain'
       : 'disk.scanNow';
@@ -217,10 +255,16 @@ function renderDiskbar() {
     el.querySelector('[data-scan]').addEventListener('click', async (ev) => {
       ev.stopPropagation();
       if (!scannable) return;
+      // Disabled on the click, not on the answer: the gap between the two is
+      // the race, and it is a network round trip wide.
+      ev.currentTarget.disabled = true;
+      markScanRequested(d.key);
       try {
         await api.requestScan(d.key);
         await refreshAll();
       } catch (err) {
+        state.scanRequested.delete(d.key);
+        renderDiskbar();
         if (err.code === 'SCAN_IN_PROGRESS') { toast(I.t('disk.scanRunning')); return; }
         if (err.code !== 'SCAN_SUPPRESSED') { toast(err.message); return; }
         /* The refusal is the window doing its job, so the way past it is a
@@ -232,11 +276,17 @@ function renderDiskbar() {
         const why = I.t(d.last_outcome === 'dropout'
           ? 'reason.SUPPRESSED_AFTER_DROPOUT' : 'reason.SUPPRESSED_AFTER_NEAR_HANG');
         if (!confirm(I.t('confirm.override', { left, why }))) return;
+        markScanRequested(d.key);
+        renderDiskbar();
         try {
           await api.requestScan(d.key, true);
           toast(I.t('toast.overridden'));
           await refreshAll();
-        } catch (e2) { toast(e2.message); }
+        } catch (e2) {
+          state.scanRequested.delete(d.key);
+          renderDiskbar();
+          toast(e2.message);
+        }
       }
     });
     el.querySelector('[data-toggle]').addEventListener('click', async (ev) => {
