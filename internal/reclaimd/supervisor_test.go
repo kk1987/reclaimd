@@ -230,3 +230,64 @@ func TestForgetRefusesMidRoundThenDeletesEverything(t *testing.T) {
 		t.Errorf("round history survived: %v", rounds)
 	}
 }
+
+// Scan now is somebody deciding this stick is worth a round, and the waits
+// before an automatic one -- probation, the grace after boot -- exist for scans
+// nobody asked for. The request used to move next_scan_at and then sit out
+// both, so the page called the scan overdue while nothing ran.
+func TestRequestScanSkipsTheWaitsForUnaskedScans(t *testing.T) {
+	f := newFakeTree(t)
+	f.addUSBNode("usb4/4-2", "090c", "1000", "0011223344556677", "4", "2")
+	f.addDisk("sda", "usb4/4-2", "0:0:0:0", "8:0", 125304832, true)
+	f.write("proc/uptime", "60.00 55.00\n") // a minute after boot
+
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	sup := NewSupervisor(mustConfig(t), store, quietLogger(), f.roots())
+	sup.tick(ctx)
+	const key = "usb-090c:1000-0011223344556677"
+	st := sup.disks[key]
+	if st == nil || !st.Meta.AdoptedAt.IsZero() {
+		t.Fatalf("want a disk on probation, got %+v", st)
+	}
+
+	if err := sup.RequestScan(key, false); err != nil {
+		t.Fatal(err)
+	}
+	sup.considerDisk(ctx, st, time.Now())
+	sup.mu.Lock()
+	adopted, started := !st.Meta.AdoptedAt.IsZero(), !st.ScanRequested
+	sup.mu.Unlock()
+	if !adopted || !started {
+		t.Fatalf("after Scan now: adopted=%v, round started=%v", adopted, started)
+	}
+
+	// The round cannot open the fake node, so it ends at once; wait it out.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		sup.mu.Lock()
+		busy := st.Scanning
+		sup.mu.Unlock()
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the round never ended")
+		}
+	}
+
+	// Unasked, the same disk, due, still waits for the machine to finish booting.
+	sup.mu.Lock()
+	st.Schedule.NextScanAt = time.Now()
+	sup.mu.Unlock()
+	sup.considerDisk(ctx, st, time.Now())
+	sup.mu.Lock()
+	defer sup.mu.Unlock()
+	if st.Scanning {
+		t.Error("a scan nobody asked for started a minute after boot")
+	}
+}

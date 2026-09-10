@@ -32,6 +32,11 @@ type diskState struct {
 	Scanning bool
 	Live     *LiveProgress
 	LastErr  string
+
+	// ScanRequested is somebody pressing Scan now. It carries the round past
+	// the waits that exist for scans nobody asked for -- probation and the
+	// grace after boot -- and is spent when the round starts or the disk goes.
+	ScanRequested bool
 }
 
 // Supervisor owns discovery, adoption and scheduling.
@@ -150,6 +155,7 @@ func (s *Supervisor) tick(ctx context.Context) {
 			continue
 		}
 		st.Present = false
+		st.ScanRequested = false
 
 		// A stick pulled before its probation ended leaves nothing worth
 		// keeping: never adopted means never scanned, so all that is on disk is
@@ -193,7 +199,10 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 		return
 	}
 	if st.Meta.AdoptedAt.IsZero() {
-		if now.Sub(st.PresentSince) < s.cfg.AdoptAfter.Duration() {
+		// Probation keeps a stick plugged in to copy one file out of the
+		// schedule. Asking for a round says this one is staying, so a request
+		// adopts it on the spot.
+		if !st.ScanRequested && now.Sub(st.PresentSince) < s.cfg.AdoptAfter.Duration() {
 			s.mu.Unlock()
 			return
 		}
@@ -207,7 +216,7 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 		_ = s.store.AppendEvent(st.Key, Event{Type: EventAdopted, Params: map[string]any{
 			"probation_s": s.cfg.AdoptAfter.Duration().Seconds(),
 		}})
-		s.logger.Info("disk adopted", "disk", st.Key)
+		s.logger.Info("disk adopted", "disk", st.Key, "requested", st.ScanRequested)
 		s.notifyChange(st.Key, "ADOPTED")
 	}
 	if !st.Meta.Enabled {
@@ -230,7 +239,8 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 		s.logger.Warn("schedule rebased after clock correction",
 			"disk", st.Key, "code", CodeClockUnsynced, "next", sched.NextScanAt)
 	}
-	if up, err := s.platform.Uptime(); err == nil && up < s.cfg.MinUptime.Duration() {
+	if up, err := s.platform.Uptime(); err == nil && up < s.cfg.MinUptime.Duration() &&
+		!st.ScanRequested {
 		s.mu.Unlock()
 		return
 	}
@@ -240,6 +250,7 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 	}
 
 	st.Scanning = true
+	st.ScanRequested = false
 	in := RoundInput{
 		Key:      st.Key,
 		Presence: st.Presence,
@@ -566,7 +577,8 @@ func (s *Supervisor) Forget(key string) error {
 
 // RequestScan asks for a round now. Suppression still applies: the escape hatch
 // is for impatience, not for overriding a safety window that exists because the
-// disk just took a filesystem down with it.
+// disk just took a filesystem down with it. The waits before a round nobody
+// asked for do not: see ScanRequested.
 func (s *Supervisor) RequestScan(key string, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -606,6 +618,7 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 		}
 	}
 	st.Schedule.NextScanAt = time.Now()
+	st.ScanRequested = true
 	return nil
 }
 
