@@ -181,11 +181,18 @@ was added; a pipe works everywhere:
 cat out/reclaimd-linux-arm64 | ssh root@<router> 'cat > /tmp/reclaimd.bin'
 cat deploy/reclaimd.init     | ssh root@<router> 'cat > /tmp/reclaimd.init'
 ssh root@<router> '
-  cp /tmp/reclaimd.bin  /usr/bin/reclaimd   && chmod 0755 /usr/bin/reclaimd
+  cp /tmp/reclaimd.bin /usr/bin/reclaimd.new && chmod 0755 /usr/bin/reclaimd.new
+  mv /usr/bin/reclaimd.new /usr/bin/reclaimd
   cp /tmp/reclaimd.init /etc/init.d/reclaimd && chmod 0755 /etc/init.d/reclaimd
-  /etc/init.d/reclaimd enable && /etc/init.d/reclaimd start'
+  /etc/init.d/reclaimd enable && /etc/init.d/reclaimd restart'
 logread -e reclaimd
 ```
+
+The binary lands next to the old one and is renamed over it because an upgrade
+cannot write to `/usr/bin/reclaimd` while the daemon is running it: that is
+`ETXTBSY`. A rename within one directory swaps the entry and leaves the running
+process on the old inode, so the restart is the only downtime. `restart` also
+starts a daemon that was not running, so the same lines serve a first install.
 
 There is nothing to configure. The daemon finds the disk, derives its read size
 from it and schedules itself; `/etc/reclaimd/config.json` is read if it exists
