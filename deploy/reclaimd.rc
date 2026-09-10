@@ -1,0 +1,42 @@
+#!/bin/sh
+#
+# rc.d script for reclaimd on FreeBSD.
+#
+# Install to /usr/local/etc/rc.d/reclaimd (mode 0755), the binary to
+# /usr/local/bin/reclaimd, then: sysrc reclaimd_enable=YES; service reclaimd start
+# The JSON log goes to syslog, tagged reclaimd.
+
+# PROVIDE: reclaimd
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=reclaimd
+rcvar=reclaimd_enable
+
+load_rc_config $name
+
+: ${reclaimd_enable:="NO"}
+: ${reclaimd_state_dir:="/var/db/reclaimd"}
+: ${reclaimd_config:="/usr/local/etc/reclaimd/config.json"}
+# The scanner is deliberately the lowest-priority thing on the box.
+: ${reclaimd_nice:="10"}
+
+# Runs as root: discovery reads CAM's device table through /dev/xpt0, which
+# nothing else may open.
+required_files="/usr/local/bin/${name}"
+pidfile="/var/run/${name}.pid"
+# The pidfile holds daemon(8)'s own pid, and rc.subr matches that process by
+# the title daemon(8) gives itself.
+procname="daemon"
+command="/usr/sbin/daemon"
+# daemon(8) restarts the child 30 seconds after it exits, which is what the
+# non-zero exit on giving up is for. On stop it hands SIGTERM on and waits, so a
+# round blocked in a read against a hanging controller gets to unwind.
+command_args="-R 30 -P ${pidfile} -S -T ${name} /usr/local/bin/${name} daemon -state-dir ${reclaimd_state_dir}"
+if [ -f "${reclaimd_config}" ]; then
+	command_args="${command_args} -config ${reclaimd_config}"
+fi
+
+run_rc_command "$1"

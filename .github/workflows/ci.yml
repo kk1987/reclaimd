@@ -28,6 +28,15 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      # Each kernel's platform file only compiles under its own GOOS, and the
+      # runner is Linux. The FreeBSD logic itself is tested below regardless;
+      # this catches what only a FreeBSD or other-BSD build would see.
+      - name: vet other kernels
+        run: |
+          for os in freebsd openbsd netbsd dragonfly; do
+            GOOS=$os go vet ./...
+          done
+
       # The daemon is concurrent throughout — supervisor, scanner and the SSE
       # hub all share state — so the race detector is the point of this job.
       # It needs cgo, which the shipped binaries deliberately do not use.

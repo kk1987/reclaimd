@@ -54,10 +54,11 @@ disk in front of it, and the UI shows the derivation.
 ## What it does
 
 - Finds USB block devices through **sysfs only** (no `/dev/disk/by-id`, which
-  OpenWrt does not populate) and identifies them by USB serial, so a rename from
-  `sda` to `sdb` after a dropout rebinds automatically.
-- Reads every block with `O_DIRECT` — a buffered read would come from the page
-  cache and refresh nothing — and records the latency of each one.
+  OpenWrt does not populate), or through CAM, GEOM and sysctl on FreeBSD, and
+  identifies them by USB serial, so a rename from `sda` to `sdb` after a
+  dropout rebinds automatically.
+- Reads every block unbuffered — a buffered read would come from the page cache
+  and refresh nothing — and records the latency of each one.
 - **Backs off at the first sign of trouble.** A slow read that completed has
   already triggered reclaim, so the refresh worked; carrying on is pure risk, and
   84% of the dropouts in the forensics had a slow block within the preceding
@@ -96,7 +97,7 @@ that produced it:
 
 | | how it decides |
 |---|---|
-| **Read size** | the largest power of two that still fits in one SCSI command, from the disk's own `max_sectors_kb`, capped at 1 MiB. The forensics drive takes 1 MiB; a USB 2.0 stick behind `usb-storage` reports a 120 KiB limit and gets 64 KiB |
+| **Read size** | the largest power of two that still fits in one SCSI command, from the disk's own transfer limit (`max_sectors_kb` on Linux), capped at 1 MiB. The forensics drive takes 1 MiB; a USB 2.0 stick behind `usb-storage` reports a 120 KiB limit and gets 64 KiB |
 | **Scan interval** | multiplicative: clean ×1.5, slow ×0.7, dropout ×0.5, clamped to 12 h–30 d |
 | **When to resume** | the interval is a *full-pass* cadence. A round that stopped on its circuit breaker did not deliver one, so it comes back at the floor and carries on from the cursor rather than waiting a whole interval to read the part it never reached |
 | **Slow / danger thresholds** | 5× and 50× the disk's own learned p50. On the drive under test that lands on 50 ms and 500 ms — the same numbers picked by hand during the forensics |
@@ -109,12 +110,12 @@ than trusted.
 
 ## Build
 
-Prebuilt binaries for both architectures are attached to every
-[release](https://github.com/kk1987/reclaimd/releases/latest), with a
+Prebuilt binaries for Linux and FreeBSD on both architectures are attached to
+every [release](https://github.com/kk1987/reclaimd/releases/latest), with a
 `SHA256SUMS` next to them. To build it yourself:
 
 ```sh
-./build.sh          # out/reclaimd-linux-amd64, out/reclaimd-linux-arm64
+./build.sh          # out/reclaimd-{linux,freebsd}-{amd64,arm64}
 ```
 
 Or, for the host you are already on:
@@ -156,10 +157,12 @@ if aimed wrongly, and it has four gates:
    confirmation you can paste from the wrong terminal is not a confirmation, and
    the error message deliberately does not tell you the serial.
 2. The disk and all its partitions must be absent from `/proc/self/mountinfo`
-   and `/proc/swaps`.
+   and `/proc/swaps` — on FreeBSD, held by nothing in the GEOM graph.
 3. It opens `O_RDWR|O_EXCL`, which on a block device means "fail if mounted or
    claimed" — turning gate 2 from a check with a race window into something the
-   kernel enforces.
+   kernel enforces. FreeBSD ignores `O_EXCL` on a disk; there GEOM refuses the
+   open while a read-write mount, swap on a partition or a ZFS pool holds the
+   disk, and a read-only mount is left to gate 2.
 4. The default `-mode=rewrite` reads each block and writes the same bytes back.
    Content-wise it is a no-op; to the NAND it is a full program cycle. **A block
    that fails to read is never written back** — doing so would turn a
@@ -242,6 +245,31 @@ install -m0755 out/reclaimd-linux-amd64 /usr/bin/reclaimd
 install -m0644 deploy/reclaimd.service /etc/systemd/system/
 systemctl enable --now reclaimd
 ```
+
+### FreeBSD
+
+```sh
+install -m0755 out/reclaimd-freebsd-amd64 /usr/local/bin/reclaimd
+install -m0755 deploy/reclaimd.rc /usr/local/etc/rc.d/reclaimd
+sysrc reclaimd_enable=YES
+service reclaimd start
+```
+
+It runs as root. Discovery reads CAM's device table through `/dev/xpt0`, which
+nothing else may open, so read-only is a promise the code makes here, as on
+OpenWrt, rather than one the kernel enforces. State goes to `/var/db/reclaimd`
+and the log to syslog, tagged `reclaimd`.
+
+A stick is keyed by the same USB vendor, product and serial as on Linux, so it
+keeps its history when it moves between the two. The read size follows the
+transfer limit da(4) works out for the disk, which FreeBSD does not export:
+1 MiB at SuperSpeed, 64 KiB behind a USB 2 port.
+
+Other BSDs are not supported. Everything that asks the kernel about a disk sits
+behind one interface, `Platform` in `internal/reclaimd/platform.go`, and the
+rest of the program already compiles for NetBSD, OpenBSD and DragonFly. But
+NetBSD and OpenBSD have neither CAM nor GEOM, so a port there is a new
+implementation of that interface rather than a variation on the FreeBSD one.
 
 ## Before putting a drive into service
 

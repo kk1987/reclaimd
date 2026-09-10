@@ -29,7 +29,7 @@ jobs:
       - name: package
         run: |
           cd out
-          for f in reclaimd-linux-*; do
+          for f in reclaimd-linux-* reclaimd-freebsd-*; do
             mv "$f" "${f/reclaimd-/reclaimd-${GITHUB_REF_NAME}-}"
           done
           sha256sum reclaimd-* > SHA256SUMS
