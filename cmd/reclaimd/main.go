@@ -74,13 +74,16 @@ func main() {
 		common.listen = fs.String("listen", "", "override HTTP listen address")
 		_ = fs.Parse(args)
 		cfg, logger := common.load()
-		if err := runDaemon(cfg, logger); err != nil {
+		asked, err := runDaemon(cfg, logger)
+		if err != nil {
 			logger.Error("daemon exited", "error", err)
 			os.Exit(1)
 		}
-		// procd restarts a service that exits 0, so a daemon that has finished
-		// for any recoverable reason must still report failure.
-		os.Exit(1)
+		if !asked {
+			// procd restarts a service that exits 0, so a daemon that has
+			// finished for any recoverable reason must still report failure.
+			os.Exit(1)
+		}
 
 	case "scan":
 		fs, common := newCommand(cmd)
@@ -271,10 +274,14 @@ func parseRange(spec string) (int64, int64, error) {
 	return start, end, nil
 }
 
-func runDaemon(cfg reclaimd.Config, logger *slog.Logger) error {
+// runDaemon reports whether it stopped because it was asked to. Only a signal
+// from the service manager counts: anything else means the daemon gave up on
+// its own, and the caller turns that into a non-zero exit so the manager
+// restarts it.
+func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 	store, err := reclaimd.OpenStore(cfg.StateDir, logger)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer store.Close()
 
@@ -324,10 +331,12 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) error {
 	_ = reclaimd.NotifyReady()
 	reclaimd.NotifyStatus("watching for usb disks")
 
+	asked := false
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 	select {
 	case <-done:
+		asked = true
 	case <-ctx.Done():
 	}
 
@@ -352,7 +361,7 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) error {
 	case <-time.After(30 * time.Second):
 		logger.Warn("supervisor did not stop in time")
 	}
-	return nil
+	return asked, nil
 }
 
 func isLoopback(addr string) bool {
