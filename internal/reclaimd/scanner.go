@@ -46,14 +46,14 @@ type retryEntry struct {
 
 // Scanner runs one round over one disk.
 type Scanner struct {
-	cfg    Config
-	store  *Store
-	logger *slog.Logger
-	roots  Roots
+	cfg      Config
+	store    *Store
+	logger   *slog.Logger
+	platform Platform
 }
 
-func NewScanner(cfg Config, store *Store, logger *slog.Logger, roots Roots) *Scanner {
-	return &Scanner{cfg: cfg, store: store, logger: logger, roots: roots}
+func NewScanner(cfg Config, store *Store, logger *slog.Logger, pl Platform) *Scanner {
+	return &Scanner{cfg: cfg, store: store, logger: logger, platform: pl}
 }
 
 // RoundInput carries everything a round needs that it cannot derive itself.
@@ -436,7 +436,7 @@ func (s *Scanner) onDropout(ctx context.Context, in RoundInput, seg int, off int
 	// Confirming the device came back is worth the wait even though the round
 	// is over: on a mounted overlay, "did the backing store return" is the
 	// question that actually matters.
-	p, err := WaitForReattach(ctx, s.roots, in.Presence.Identity, int(blockSize),
+	p, err := WaitForReattach(ctx, s.platform, in.Presence.Identity, int(blockSize),
 		s.cfg.ReattachTimeout.Duration())
 	if err != nil {
 		s.logger.Error("device did not come back", "disk", in.Key, "error", err)

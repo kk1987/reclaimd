@@ -18,10 +18,6 @@ import (
 
 const stateSchema = 1
 
-// tmpfsMagic identifies a volatile filesystem. See OpenStore for why this
-// matters more than it looks.
-const tmpfsMagic = 0x01021994
-
 // Meta is the per-disk identity record: what this disk is, and whether we are
 // managing it.
 type Meta struct {
@@ -73,8 +69,7 @@ func OpenStore(root string, logger *slog.Logger) (*Store, error) {
 		return nil, fmt.Errorf("create state dir %s: %w", root, err)
 	}
 
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(root, &st); err == nil && st.Type == tmpfsMagic {
+	if onTmpfs(root) {
 		logger.Warn("state directory is on tmpfs; schedule and dropout suppression "+
 			"will not survive a reboot -- pass -state-dir to somewhere persistent",
 			"code", CodeStateVolatile, "dir", root)

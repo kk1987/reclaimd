@@ -5,17 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
 
-// discoveryInterval is how often sysfs is enumerated. It is slow on purpose:
-// discovery reads sysfs only, which never touches the bus, but there is no
-// reason to spin either -- a stick that just appeared can wait 30 seconds to be
-// noticed, and it has 30 minutes of probation ahead of it regardless.
+// discoveryInterval is how often discovery runs. It is slow on purpose:
+// discovery never touches the bus, but there is no reason to spin either -- a
+// stick that just appeared can wait 30 seconds to be noticed, and it has 30
+// minutes of probation ahead of it regardless.
 const discoveryInterval = 30 * time.Second
 
 // diskState is the supervisor's per-disk view. Anything durable lives in the
@@ -39,11 +36,11 @@ type diskState struct {
 
 // Supervisor owns discovery, adoption and scheduling.
 type Supervisor struct {
-	cfg     Config
-	store   *Store
-	logger  *slog.Logger
-	roots   Roots
-	scanner *Scanner
+	cfg      Config
+	store    *Store
+	logger   *slog.Logger
+	platform Platform
+	scanner  *Scanner
 
 	mu    sync.RWMutex
 	disks map[string]*diskState
@@ -58,14 +55,14 @@ type Supervisor struct {
 	heartbeat atomic64
 }
 
-func NewSupervisor(cfg Config, store *Store, logger *slog.Logger, roots Roots) *Supervisor {
+func NewSupervisor(cfg Config, store *Store, logger *slog.Logger, pl Platform) *Supervisor {
 	return &Supervisor{
-		cfg:     cfg,
-		store:   store,
-		logger:  logger,
-		roots:   roots,
-		scanner: NewScanner(cfg, store, logger, roots),
-		disks:   map[string]*diskState{},
+		cfg:      cfg,
+		store:    store,
+		logger:   logger,
+		platform: pl,
+		scanner:  NewScanner(cfg, store, logger, pl),
+		disks:    map[string]*diskState{},
 	}
 }
 
@@ -113,7 +110,7 @@ func (s *Supervisor) loadKnownDisks() {
 func (s *Supervisor) tick(ctx context.Context) {
 	s.heartbeat.Store(time.Now().Unix())
 
-	found, err := DiscoverUSBDisks(s.roots)
+	found, err := s.platform.Discover()
 	if err != nil {
 		s.logger.Error("discovery failed", "error", err)
 		return
@@ -233,7 +230,7 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 		s.logger.Warn("schedule rebased after clock correction",
 			"disk", st.Key, "code", CodeClockUnsynced, "next", sched.NextScanAt)
 	}
-	if up, err := uptime(s.roots); err == nil && up < s.cfg.MinUptime.Duration() {
+	if up, err := s.platform.Uptime(); err == nil && up < s.cfg.MinUptime.Duration() {
 		s.mu.Unlock()
 		return
 	}
@@ -263,7 +260,7 @@ func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput)
 		s.notifyChange(st.Key, "SCAN_END")
 	}()
 
-	dev, err := OpenDevice(in.Presence, s.cfg.BlockSizeFor(in.Presence.Identity), s.roots)
+	dev, err := OpenDevice(in.Presence, s.cfg.BlockSizeFor(in.Presence.Identity), s.platform)
 	if err != nil {
 		s.logger.Error("open device", "disk", st.Key, "error", err)
 		s.setErr(st, err)
@@ -281,7 +278,7 @@ func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput)
 		in.Deferred = bits
 	}
 	in.Dev = dev
-	in.Ext = NewExternalIOMonitor(s.cfg, s.roots, in.Presence)
+	in.Ext = NewExternalIOMonitor(s.cfg, s.platform, in.Presence)
 	in.OnProgress = func(p LiveProgress) {
 		s.mu.Lock()
 		cp := p
@@ -429,7 +426,7 @@ func (s *Supervisor) updateFreshness(key string, res RoundResult) {
 // suppression included, because a manual run is impatience, not a reason to
 // re-enter a window opened by the disk taking a filesystem down.
 func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (RoundSummary, error) {
-	found, err := DiscoverUSBDisks(s.roots)
+	found, err := s.platform.Discover()
 	if err != nil {
 		return RoundSummary{}, err
 	}
@@ -474,7 +471,7 @@ func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (Roun
 	s.disks[key] = st
 	s.mu.Unlock()
 
-	dev, err := OpenDevice(p, s.cfg.BlockSizeFor(p.Identity), s.roots)
+	dev, err := OpenDevice(p, s.cfg.BlockSizeFor(p.Identity), s.platform)
 	if err != nil {
 		return RoundSummary{}, err
 	}
@@ -484,7 +481,7 @@ func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (Roun
 	}
 
 	in := RoundInput{Key: key, Dev: dev, Presence: p, Schedule: sched,
-		Ext: NewExternalIOMonitor(s.cfg, s.roots, p)}
+		Ext: NewExternalIOMonitor(s.cfg, s.platform, p)}
 	if bits, err := s.store.LoadDeferred(key); err == nil {
 		in.Deferred = bits
 	}
@@ -618,21 +615,3 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 // 1.8s inside pread is the expected case, not a hang, and a watchdog that
 // killed the process for it would fire precisely when things were working.
 func (s *Supervisor) Heartbeat() time.Time { return time.Unix(s.heartbeat.Load(), 0) }
-
-// uptime reads /proc/uptime rather than comparing wall clocks, because on a
-// router the wall clock at boot is fiction.
-func uptime(r Roots) (time.Duration, error) {
-	b, err := os.ReadFile(r.Proc + "/uptime")
-	if err != nil {
-		return 0, err
-	}
-	f := strings.Fields(string(b))
-	if len(f) == 0 {
-		return 0, errors.New("malformed /proc/uptime")
-	}
-	secs, err := strconv.ParseFloat(f[0], 64)
-	if err != nil {
-		return 0, err
-	}
-	return time.Duration(secs * float64(time.Second)), nil
-}

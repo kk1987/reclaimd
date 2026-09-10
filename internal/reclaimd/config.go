@@ -70,7 +70,7 @@ type Config struct {
 
 	// MinUptime stops the daemon scanning while the machine is still booting,
 	// when the stick has only just enumerated and everything else is competing
-	// for it. Measured against /proc/uptime, never the wall clock.
+	// for it. Measured on the kernel's uptime clock, never the wall clock.
 	MinUptime Duration `json:"min_uptime"`
 
 	// ---- read geometry ----
@@ -209,7 +209,7 @@ func (c *Config) withDefaults() {
 		c.ListenAddr = "127.0.0.1:8099"
 	}
 	if c.StateDir == "" {
-		c.StateDir = "/var/lib/reclaimd"
+		c.StateDir = defaultStateDir
 	}
 	if c.LogLevel == "" {
 		c.LogLevel = "info"

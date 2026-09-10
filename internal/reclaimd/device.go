@@ -29,7 +29,7 @@ type Device struct {
 	buf       []byte
 	presence  Presence
 	blockSize int
-	roots     Roots
+	platform  Platform
 }
 
 // alignedBuffer returns page-aligned, off-heap memory for O_DIRECT.
@@ -41,7 +41,7 @@ type Device struct {
 func alignedBuffer(n int) ([]byte, error) {
 	b, err := syscall.Mmap(-1, 0, n,
 		syscall.PROT_READ|syscall.PROT_WRITE,
-		syscall.MAP_PRIVATE|syscall.MAP_ANONYMOUS)
+		syscall.MAP_PRIVATE|syscall.MAP_ANON)
 	if err != nil {
 		return nil, fmt.Errorf("mmap %d bytes for o_direct buffer: %w", n, err)
 	}
@@ -58,22 +58,22 @@ func alignment(p Presence) int {
 	return a
 }
 
-// OpenDevice opens the whole-disk node read-only with O_DIRECT.
+// OpenDevice opens the whole-disk node read-only and unbuffered.
 //
-// O_DIRECT is not an optimisation here, it is the entire mechanism: a buffered
-// read can be served from the page cache without touching NAND, which would
-// make the daemon a very elaborate no-op. It also keeps us from evicting the
-// overlay's own cache while we sweep 60 GiB past it.
+// Unbuffered is not an optimisation here, it is the entire mechanism: a
+// buffered read can be served from the page cache without touching NAND, which
+// would make the daemon a very elaborate no-op. It also keeps us from evicting
+// the overlay's own cache while we sweep 60 GiB past it. What that takes
+// differs by kernel, and scanOpenFlags says what it is on each one.
 //
-// O_EXCL is deliberately NOT passed. On a block device it means "fail if
-// mounted or claimed", and running while the disk is a live overlay is the
-// whole point. The refresh command is the mirror image and always passes it.
-func OpenDevice(p Presence, blockSize int, roots Roots) (*Device, error) {
+// The open is not exclusive either: running while the disk is a live overlay
+// is the whole point. The refresh command is the mirror image.
+func OpenDevice(p Presence, blockSize int, pl Platform) (*Device, error) {
 	if blockSize%alignment(p) != 0 {
 		return nil, fmt.Errorf("%w: block size %d is not a multiple of %d",
 			ErrAlignment, blockSize, alignment(p))
 	}
-	f, err := os.OpenFile(p.Node, os.O_RDONLY|syscall.O_DIRECT|syscall.O_CLOEXEC, 0)
+	f, err := os.OpenFile(p.Node, scanOpenFlags, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", p.Node, err)
 	}
@@ -82,7 +82,7 @@ func OpenDevice(p Presence, blockSize int, roots Roots) (*Device, error) {
 		f.Close()
 		return nil, err
 	}
-	return &Device{file: f, buf: buf, presence: p, blockSize: blockSize, roots: roots}, nil
+	return &Device{file: f, buf: buf, presence: p, blockSize: blockSize, platform: pl}, nil
 }
 
 func (d *Device) Close() error {
@@ -143,34 +143,14 @@ func (d *Device) classify(err error) error {
 
 	case errors.Is(err, syscall.EIO):
 		// EIO is ambiguous: one unreadable sector and a vanished device look
-		// identical at the syscall boundary. sysfs is the tiebreak, and reading
-		// it does not touch the bus.
-		if d.sysfsAlive() {
+		// identical at the syscall boundary. The platform is the tiebreak, and
+		// asking it does not touch the bus.
+		if d.platform.Alive(d.presence) {
 			return ErrMediaError
 		}
 		return ErrDeviceDisconnected
 	}
 	return err
-}
-
-// sysfsAlive reports whether the block node still exists, still reports the
-// same capacity, and still says "running".
-//
-// A suspend/resume cycle ("root hub lost power or was reset") produces a
-// transient EIO with all three of these still true. Treating that as a dropout
-// would suppress scanning for 24 hours every time the laptop lid closes.
-func (d *Device) sysfsAlive() bool { return presenceAlive(d.presence) }
-
-// presenceAlive is the same test as a free function, because the refresh
-// command needs it too and has no Device to hang it off.
-func presenceAlive(p Presence) bool {
-	if readSysInt(filepath.Join(p.SysPath, "size"))*sectorSize != p.Identity.SizeBytes {
-		return false
-	}
-	if st := readSysString(filepath.Join(p.SysPath, "device", "state")); st != "" && st != "running" {
-		return false
-	}
-	return true
 }
 
 // WarmUp burns throwaway reads before timing starts.
@@ -206,7 +186,7 @@ func (d *Device) WarmUp(ctx context.Context, discard int) error {
 // The deadline is generous because measured re-enumeration is 5-6s and the
 // slack has to cover a SuperSpeed-to-HighSpeed renegotiation plus a second
 // enumeration attempt.
-func WaitForReattach(ctx context.Context, roots Roots, want DiskIdentity,
+func WaitForReattach(ctx context.Context, pl Platform, want DiskIdentity,
 	blockSize int, deadline time.Duration) (Presence, error) {
 
 	end := time.Now().Add(deadline)
@@ -219,7 +199,7 @@ func WaitForReattach(ctx context.Context, roots Roots, want DiskIdentity,
 			backoff = backoff * 3 / 2
 		}
 
-		p, err := FindByKey(roots, want)
+		p, err := FindByKey(pl, want)
 		if errors.Is(err, ErrIdentityMismatch) {
 			// Something else is wearing this key. Never touch it.
 			return Presence{}, err
@@ -227,13 +207,13 @@ func WaitForReattach(ctx context.Context, roots Roots, want DiskIdentity,
 		if err != nil {
 			continue
 		}
-		if readSysString(filepath.Join(p.SysPath, "device", "state")) != "running" {
+		if !pl.Alive(p) {
 			continue
 		}
 		// The node can exist before the device answers commands, and on
 		// devtmpfs there is a window where /dev/<name> is not there yet. An
 		// ENOENT here means "keep waiting", not "gone for good".
-		dev, err := OpenDevice(p, blockSize, roots)
+		dev, err := OpenDevice(p, blockSize, pl)
 		if err != nil {
 			continue
 		}

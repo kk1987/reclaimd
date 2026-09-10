@@ -37,7 +37,7 @@ func realDevice(t *testing.T) Presence {
 	if key == "" {
 		t.Skip("set RECLAIMD_TEST_DISK=<key> to run against real hardware")
 	}
-	disks, err := DiscoverUSBDisks(DefaultRoots())
+	disks, err := DefaultPlatform().Discover()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func realDevice(t *testing.T) Presence {
 
 func TestRealDeviceReadLatency(t *testing.T) {
 	p := realDevice(t)
-	dev, err := OpenDevice(p, 1<<20, DefaultRoots())
+	dev, err := OpenDevice(p, 1<<20, DefaultPlatform())
 	if err != nil {
 		t.Fatalf("open (a wrong O_DIRECT constant shows up here as ENOTDIR): %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRealDeviceReadLatency(t *testing.T) {
 // hardware.
 func TestRealDeviceUnalignedOffsetIsAlignmentError(t *testing.T) {
 	p := realDevice(t)
-	dev, err := OpenDevice(p, 1<<20, DefaultRoots())
+	dev, err := OpenDevice(p, 1<<20, DefaultPlatform())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestRealDeviceUnalignedOffsetIsAlignmentError(t *testing.T) {
 
 func TestRealDeviceBlockCount(t *testing.T) {
 	p := realDevice(t)
-	dev, err := OpenDevice(p, 1<<20, DefaultRoots())
+	dev, err := OpenDevice(p, 1<<20, DefaultPlatform())
 	if err != nil {
 		t.Fatal(err)
 	}

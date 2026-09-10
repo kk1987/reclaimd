@@ -125,7 +125,7 @@ func main() {
 			logger.Error("bad -range", "error", err)
 			os.Exit(1)
 		}
-		err = reclaimd.Refresh(context.Background(), cfg, reclaimd.DefaultRoots(), logger,
+		err = reclaimd.Refresh(context.Background(), cfg, reclaimd.DefaultPlatform(), logger,
 			reclaimd.RefreshOpts{
 				Key: *disk, Confirm: *confirm, Mode: *mode, IMeanIt: *iMeanIt,
 				Start: start, End: end, DryRun: *dryRun,
@@ -203,7 +203,7 @@ func runScan(cfg reclaimd.Config, logger *slog.Logger, disk string, force bool) 
 		cancel()
 	}()
 
-	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultRoots())
+	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultPlatform())
 	sum, err := sup.ScanOnce(ctx, disk, force)
 	if err != nil {
 		logger.Error("scan failed", "error", err, "disk", disk)
@@ -288,7 +288,7 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultRoots())
+	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultPlatform())
 	srv := reclaimd.NewServer(cfg, store, sup, logger)
 
 	if cfg.ListenAddr != "" && !isLoopback(cfg.ListenAddr) && cfg.UIToken == "" {
@@ -405,7 +405,7 @@ func emitVersion() {
 // the key here does not match the key on the other machine, nothing downstream
 // will line up.
 func runList(logger *slog.Logger) error {
-	disks, err := reclaimd.DiscoverUSBDisks(reclaimd.DefaultRoots())
+	disks, err := reclaimd.DefaultPlatform().Discover()
 	if err != nil {
 		return err
 	}

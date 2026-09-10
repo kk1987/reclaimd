@@ -1,13 +1,7 @@
 package reclaimd
 
 import (
-	"bufio"
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -186,12 +180,12 @@ func (c *DutyController) RestRatio() float64 {
 
 // ExternalIOMonitor answers "is anybody else using this disk".
 //
-// It reads /proc/diskstats, a procfs read that never touches the bus -- so
-// polling it, unlike opening the device, cannot defeat USB autosuspend.
+// It reads the kernel's I/O counters, which never touches the bus -- so
+// polling them, unlike opening the device, cannot defeat USB autosuspend.
 type ExternalIOMonitor struct {
-	cfg          Config
-	roots        Roots
-	major, minor int
+	cfg      Config
+	platform Platform
+	presence Presence
 
 	lastSectorsRead uint64
 	lastWrites      uint64
@@ -204,48 +198,14 @@ type ExternalIOMonitor struct {
 	foreignWr float64
 }
 
-func NewExternalIOMonitor(cfg Config, roots Roots, p Presence) *ExternalIOMonitor {
-	return &ExternalIOMonitor{cfg: cfg, roots: roots, major: p.Major, minor: p.Minor}
+func NewExternalIOMonitor(cfg Config, pl Platform, p Presence) *ExternalIOMonitor {
+	return &ExternalIOMonitor{cfg: cfg, platform: pl, presence: p}
 }
 
 type diskStat struct {
 	sectorsRead uint64
 	writes      uint64
 	inFlight    uint64
-}
-
-// readDiskstats locates the row by device NUMBER, not by name.
-//
-// After a re-enumeration the kernel name changes from sda to sdb, and a
-// name-keyed lookup would quietly start describing a different disk -- or the
-// same disk under a stale name, which is worse because it looks plausible.
-func (m *ExternalIOMonitor) readDiskstats() (diskStat, error) {
-	f, err := os.Open(filepath.Join(m.roots.Proc, "diskstats"))
-	if err != nil {
-		return diskStat{}, err
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 14 {
-			continue
-		}
-		maj, err1 := strconv.Atoi(fields[0])
-		min, err2 := strconv.Atoi(fields[1])
-		if err1 != nil || err2 != nil || maj != m.major || min != m.minor {
-			continue
-		}
-		// Field indices are the post-5.5 layout: 5 sectors read, 7 writes
-		// completed, 11 in-flight. Sectors are 512-byte units regardless of the
-		// device's logical block size.
-		sr, _ := strconv.ParseUint(fields[5], 10, 64)
-		w, _ := strconv.ParseUint(fields[7], 10, 64)
-		inf, _ := strconv.ParseUint(fields[11], 10, 64)
-		return diskStat{sectorsRead: sr, writes: w, inFlight: inf}, nil
-	}
-	return diskStat{}, fmt.Errorf("no diskstats row for %d:%d", m.major, m.minor)
 }
 
 // RecordSelfRead tells the monitor how much of the traffic is ours.
@@ -264,7 +224,7 @@ func (m *ExternalIOMonitor) RecordSelfRead(n int) {
 // the cleanest signal available and, on an f2fs overlay, the one that actually
 // fires.
 func (m *ExternalIOMonitor) Sample() (readBps, writeIOPS float64, err error) {
-	st, err := m.readDiskstats()
+	st, err := m.platform.IOStats(m.presence)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -314,7 +274,7 @@ func (m *ExternalIOMonitor) busy(readBps, writeIOPS float64) bool {
 func (m *ExternalIOMonitor) WaitIfBusy(ctx context.Context) error {
 	rd, wr, err := m.Sample()
 	if err != nil {
-		return nil // diskstats unreadable: not a reason to stop scanning
+		return nil // counters unreadable: not a reason to stop scanning
 	}
 	if !m.busy(rd, wr) {
 		m.yieldStep = 0

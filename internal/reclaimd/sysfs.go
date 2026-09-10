@@ -2,6 +2,7 @@ package reclaimd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +11,10 @@ import (
 	"time"
 )
 
-// Roots lets the whole discovery layer be pointed at a fake tree under
-// testdata/. Device discovery is the one piece of this program that cannot be
-// exercised by unplugging things in CI, so it has to be injectable.
+// Roots is the Linux platform: sysfs and procfs, read as plain files. It lets
+// the whole discovery layer be pointed at a fake tree under testdata/. Device
+// discovery is the one piece of this program that cannot be exercised by
+// unplugging things in CI, so it has to be injectable.
 type Roots struct {
 	Sys  string
 	Proc string
@@ -20,6 +22,8 @@ type Roots struct {
 }
 
 func DefaultRoots() Roots { return Roots{Sys: "/sys", Proc: "/proc", Dev: "/dev"} }
+
+func (r Roots) Discover() ([]Presence, error) { return DiscoverUSBDisks(r) }
 
 // sectorSize is the unit of /sys/block/<x>/size. It is ALWAYS 512 regardless of
 // the device's logical_block_size -- multiplying by logical_block_size instead
@@ -179,83 +183,6 @@ func DiscoverUSBDisks(r Roots) ([]Presence, error) {
 	return found, nil
 }
 
-// assignKeys fills in Key for every discovered disk, downgrading to an unstable
-// path-derived key when a serial is missing or shared.
-//
-// Some vendors ship an entire production run with one hardcoded serial. Two
-// sticks answering to the same key would silently share history and, worse,
-// could be mistaken for each other after a re-enumeration. Downgrading BOTH
-// sides of a collision is deliberate: an unstable key that forgets history
-// across a port change is much cheaper than a stable key pointing at the wrong
-// hardware.
-func assignKeys(disks []Presence) {
-	// Two disks sharing a serial mean very different things depending on
-	// whether they hang off the same USB device node. One node with several
-	// LUNs is a card reader: legitimate, and the LUN address separates them.
-	// Several nodes answering the same serial is a vendor that hardcoded one
-	// serial across a production run, and there is nothing left to tell those
-	// sticks apart by.
-	nodesPerSerial := map[string]map[string]bool{}
-	lunsPerNode := map[string]int{}
-	for i := range disks {
-		sk := serialKey(disks[i].Identity)
-		nk := usbNodeKey(disks[i].Identity)
-		if nodesPerSerial[sk] == nil {
-			nodesPerSerial[sk] = map[string]bool{}
-		}
-		nodesPerSerial[sk][nk] = true
-		lunsPerNode[nk]++
-	}
-
-	for i := range disks {
-		id := &disks[i].Identity
-		sk := serialKey(*id)
-		switch {
-		case id.Serial == "" || len(nodesPerSerial[sk]) > 1:
-			// Downgrade BOTH sides of a collision. A path key changes when the
-			// stick moves to another port, and that instability is the point:
-			// losing history is far cheaper than attributing one stick's
-			// history -- and its dropout suppression -- to another.
-			id.Key = fmt.Sprintf("path-%s:%s-b%s-p%s-%d",
-				id.VendorID, id.ProductID, id.BusNum, id.DevPath, id.SizeBytes)
-			id.KeyIsStable = false
-		case lunsPerNode[usbNodeKey(*id)] > 1:
-			id.Key = sk + "-lun" + sanitizeKey(id.SCSIAddr)
-			id.KeyIsStable = true
-		default:
-			id.Key = sk
-			id.KeyIsStable = true
-		}
-	}
-}
-
-func serialKey(id DiskIdentity) string {
-	return fmt.Sprintf("usb-%s:%s-%s", id.VendorID, id.ProductID, sanitizeKey(id.Serial))
-}
-
-func usbNodeKey(id DiskIdentity) string {
-	return fmt.Sprintf("%s:%s-b%s-p%s", id.VendorID, id.ProductID, id.BusNum, id.DevPath)
-}
-
-// sanitizeKey keeps keys usable as directory names. Serials are vendor-supplied
-// and have been seen to contain spaces and slashes.
-func sanitizeKey(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '_', r == '.', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-		if b.Len() >= 64 {
-			break
-		}
-	}
-	return b.String()
-}
-
 func parseDevno(s string) (int, int, error) {
 	maj, min, ok := strings.Cut(s, ":")
 	if !ok {
@@ -285,7 +212,6 @@ func protectedDevnos(r Roots) (map[devno]bool, error) {
 	}
 	defer f.Close()
 
-	guard := map[string]bool{"/": true, "/boot": true, "/boot/efi": true, "/usr": true}
 	out := map[devno]bool{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -293,7 +219,7 @@ func protectedDevnos(r Roots) (map[devno]bool, error) {
 		if len(fields) < 5 {
 			continue
 		}
-		if !guard[fields[4]] {
+		if !guardedMounts[fields[4]] {
 			continue
 		}
 		maj, min, err := parseDevno(fields[2])
@@ -330,27 +256,121 @@ func backsProtected(sysPath, name string, major, minor int, protected map[devno]
 	return false
 }
 
-// FindByKey re-resolves a key to wherever the disk lives right now.
+// Alive reports whether the block node still exists, still reports the same
+// capacity, and still says "running".
 //
-// This is the function that makes a dropout survivable. After a re-enumeration
-// the old path may well name a DIFFERENT disk, so nothing may be reused from
-// before: the whole presence is rebuilt from a fresh scan, and the capacity is
-// re-checked as a last line of defence against a stranger answering to a
-// cloned serial.
-func FindByKey(r Roots, want DiskIdentity) (Presence, error) {
-	disks, err := DiscoverUSBDisks(r)
-	if err != nil {
-		return Presence{}, err
+// A suspend/resume cycle ("root hub lost power or was reset") produces a
+// transient EIO with all three of these still true. Treating that as a dropout
+// would suppress scanning for 24 hours every time the laptop lid closes.
+func (r Roots) Alive(p Presence) bool {
+	if readSysInt(filepath.Join(p.SysPath, "size"))*sectorSize != p.Identity.SizeBytes {
+		return false
 	}
-	for _, p := range disks {
-		if p.Identity.Key != want.Key {
+	if st := readSysString(filepath.Join(p.SysPath, "device", "state")); st != "" && st != "running" {
+		return false
+	}
+	return true
+}
+
+// CheckNotInUse checks the mount and swap tables for the disk and every
+// partition of it.
+func (r Roots) CheckNotInUse(p Presence) error {
+	devnos := map[devno]bool{{p.Major, p.Minor}: true}
+	if entries, err := os.ReadDir(p.SysPath); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), p.KernelName) {
+				continue
+			}
+			if maj, min, err := parseDevno(
+				readSysString(filepath.Join(p.SysPath, e.Name(), "dev"))); err == nil {
+				devnos[devno{maj, min}] = true
+			}
+		}
+	}
+
+	f, err := os.Open(filepath.Join(r.Proc, "self", "mountinfo"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 5 {
 			continue
 		}
-		if want.SizeBytes != 0 && p.Identity.SizeBytes != want.SizeBytes {
-			return Presence{}, fmt.Errorf("%w: key %s now reports %d bytes, expected %d",
-				ErrIdentityMismatch, want.Key, p.Identity.SizeBytes, want.SizeBytes)
+		maj, min, err := parseDevno(fields[2])
+		if err != nil {
+			continue
 		}
-		return p, nil
+		if devnos[devno{maj, min}] {
+			return fmt.Errorf("%w: %s is mounted at %s", ErrDeviceMounted, p.Node, fields[4])
+		}
 	}
-	return Presence{}, ErrNotFound
+
+	sf, err := os.Open(filepath.Join(r.Proc, "swaps"))
+	if err == nil {
+		defer sf.Close()
+		ssc := bufio.NewScanner(sf)
+		for ssc.Scan() {
+			line := ssc.Text()
+			if strings.HasPrefix(line, p.Node) {
+				return fmt.Errorf("%w: %s is in use as swap", ErrDeviceMounted, p.Node)
+			}
+		}
+	}
+	return nil
+}
+
+// IOStats reads /proc/diskstats, a procfs read that never touches the bus.
+//
+// It locates the row by device NUMBER, not by name. After a re-enumeration the
+// kernel name changes from sda to sdb, and a name-keyed lookup would quietly
+// start describing a different disk -- or the same disk under a stale name,
+// which is worse because it looks plausible.
+func (r Roots) IOStats(p Presence) (diskStat, error) {
+	f, err := os.Open(filepath.Join(r.Proc, "diskstats"))
+	if err != nil {
+		return diskStat{}, err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 14 {
+			continue
+		}
+		maj, err1 := strconv.Atoi(fields[0])
+		min, err2 := strconv.Atoi(fields[1])
+		if err1 != nil || err2 != nil || maj != p.Major || min != p.Minor {
+			continue
+		}
+		// Field indices are the post-5.5 layout: 5 sectors read, 7 writes
+		// completed, 11 in-flight. Sectors are 512-byte units regardless of the
+		// device's logical block size.
+		sr, _ := strconv.ParseUint(fields[5], 10, 64)
+		w, _ := strconv.ParseUint(fields[7], 10, 64)
+		inf, _ := strconv.ParseUint(fields[11], 10, 64)
+		return diskStat{sectorsRead: sr, writes: w, inFlight: inf}, nil
+	}
+	return diskStat{}, fmt.Errorf("no diskstats row for %d:%d", p.Major, p.Minor)
+}
+
+// Uptime reads /proc/uptime rather than comparing wall clocks, because on a
+// router the wall clock at boot is fiction.
+func (r Roots) Uptime() (time.Duration, error) {
+	b, err := os.ReadFile(r.Proc + "/uptime")
+	if err != nil {
+		return 0, err
+	}
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0, errors.New("malformed /proc/uptime")
+	}
+	secs, err := strconv.ParseFloat(f[0], 64)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(secs * float64(time.Second)), nil
 }

@@ -1,14 +1,11 @@
 package reclaimd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -42,7 +39,7 @@ const (
 // marginal; rewriting is the bigger hammer, and it refreshes everything whether
 // the controller agrees or not. That is why it is a separate command behind
 // four gates rather than something the daemon may decide to do.
-func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, opts RefreshOpts) error {
+func Refresh(ctx context.Context, cfg Config, pl Platform, logger *slog.Logger, opts RefreshOpts) error {
 	if opts.Mode == "" {
 		opts.Mode = RefreshRewrite
 	}
@@ -51,7 +48,7 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 			ErrConfirmMismatch)
 	}
 
-	disks, err := DiscoverUSBDisks(roots)
+	disks, err := pl.Discover()
 	if err != nil {
 		return err
 	}
@@ -79,9 +76,9 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 			"target device (%s at %s)", ErrConfirmMismatch, p.Identity.Model, p.Node)
 	}
 
-	// Gate 2. The whole disk and every partition of it must be absent from both
-	// the mount table and the swap table.
-	if err := assertNotInUse(roots, p); err != nil {
+	// Gate 2. Neither the whole disk nor any partition of it may be mounted,
+	// used as swap or otherwise claimed.
+	if err := pl.CheckNotInUse(p); err != nil {
 		return err
 	}
 
@@ -103,12 +100,10 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 		return nil
 	}
 
-	// Gate 3. O_EXCL on a block device means "fail if mounted or claimed", which
-	// upgrades gate 2 from a check with a race window into a guarantee the
-	// kernel enforces. It also closes the door on udisks2 mounting the disk
-	// between the check and the first write.
-	f, err := os.OpenFile(p.Node,
-		os.O_RDWR|syscall.O_EXCL|syscall.O_DIRECT|syscall.O_CLOEXEC, 0)
+	// Gate 3. An open the kernel itself refuses while the disk is in use, which
+	// upgrades gate 2 from a check with a race window into a guarantee. How
+	// much of gate 2 each kernel enforces is written at refreshOpenFlags.
+	f, err := os.OpenFile(p.Node, refreshOpenFlags, 0)
 	if err != nil {
 		return fmt.Errorf("open %s exclusively (is it mounted?): %w", p.Node, err)
 	}
@@ -134,14 +129,13 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 	// identity to come back and hands the loop a fresh exclusive handle, under
 	// whatever device name the kernel picked this time.
 	reopen := func(ctx context.Context) (refreshTarget, error) {
-		np, err := WaitForReattach(ctx, roots, p.Identity, cfg.BlockSize,
+		np, err := WaitForReattach(ctx, pl, p.Identity, cfg.BlockSize,
 			cfg.ReattachTimeout.Duration())
 		if err != nil {
 			return nil, fmt.Errorf("device did not return after a refresh dropout: %w", err)
 		}
 		p = np
-		nf, err := os.OpenFile(p.Node,
-			os.O_RDWR|syscall.O_EXCL|syscall.O_DIRECT|syscall.O_CLOEXEC, 0)
+		nf, err := os.OpenFile(p.Node, refreshOpenFlags, 0)
 		if err != nil {
 			return nil, fmt.Errorf("reopen %s after dropout: %w", p.Node, err)
 		}
@@ -149,7 +143,7 @@ func Refresh(ctx context.Context, cfg Config, roots Roots, logger *slog.Logger, 
 	}
 
 	t0 := time.Now()
-	alive := func() bool { return presenceAlive(p) }
+	alive := func() bool { return pl.Alive(p) }
 	st, err := rewriteRange(ctx, logger, f, reopen, alive, buf, start, end, blockSize,
 		opts.Mode == RefreshRewrite, maxDrops)
 	if err != nil {
@@ -267,7 +261,8 @@ func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
 // responses. Treating every EIO as a dropout means one bad sector burns the
 // whole dropout budget -- close, reattach, retry the same block, fail again --
 // and aborts a refresh that should simply have stepped over it. So EIO asks
-// sysfs, which answers without touching the bus, exactly as the scanner does.
+// the platform, which answers without touching the bus, exactly as the
+// scanner does.
 func isDisconnect(err error, alive func() bool) bool {
 	switch {
 	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ENXIO):
@@ -276,54 +271,4 @@ func isDisconnect(err error, alive func() bool) bool {
 		return alive == nil || !alive()
 	}
 	return false
-}
-
-// assertNotInUse checks the mount and swap tables for the disk and every
-// partition of it.
-func assertNotInUse(roots Roots, p Presence) error {
-	devnos := map[devno]bool{{p.Major, p.Minor}: true}
-	if entries, err := os.ReadDir(p.SysPath); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() || !strings.HasPrefix(e.Name(), p.KernelName) {
-				continue
-			}
-			if maj, min, err := parseDevno(
-				readSysString(filepath.Join(p.SysPath, e.Name(), "dev"))); err == nil {
-				devnos[devno{maj, min}] = true
-			}
-		}
-	}
-
-	f, err := os.Open(filepath.Join(roots.Proc, "self", "mountinfo"))
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 5 {
-			continue
-		}
-		maj, min, err := parseDevno(fields[2])
-		if err != nil {
-			continue
-		}
-		if devnos[devno{maj, min}] {
-			return fmt.Errorf("%w: %s is mounted at %s", ErrDeviceMounted, p.Node, fields[4])
-		}
-	}
-
-	sf, err := os.Open(filepath.Join(roots.Proc, "swaps"))
-	if err == nil {
-		defer sf.Close()
-		ssc := bufio.NewScanner(sf)
-		for ssc.Scan() {
-			line := ssc.Text()
-			if strings.HasPrefix(line, p.Node) {
-				return fmt.Errorf("%w: %s is in use as swap", ErrDeviceMounted, p.Node)
-			}
-		}
-	}
-	return nil
 }
