@@ -31,9 +31,12 @@ type Server struct {
 	hub    *Hub
 	start  time.Time
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// pending holds the frames that arrived since the last tick, and only
+	// those. An entry left behind here goes out again on every later tick that
+	// any other disk makes busy, which is how a round that ended half an hour
+	// ago keeps arriving at the browser.
 	pending map[string]LiveProgress
-	dirty   bool
 }
 
 func NewServer(cfg Config, store *Store, sup *Supervisor, logger *slog.Logger) *Server {
@@ -43,6 +46,12 @@ func NewServer(cfg Config, store *Store, sup *Supervisor, logger *slog.Logger) *
 	}
 	sup.OnLive = s.onLive
 	sup.OnChange = func(key, change string) {
+		if change == "SCAN_END" {
+			// A frame queued in the last half-second would otherwise land
+			// after this event and put the page back into a round that has
+			// already finished, showing numbers that never move again.
+			s.dropPending(key)
+		}
 		s.hub.Publish("state", map[string]any{
 			"disk": key, "change": change,
 			"refetch": []string{"disk", "rounds", "events"},
@@ -54,7 +63,29 @@ func NewServer(cfg Config, store *Store, sup *Supervisor, logger *slog.Logger) *
 func (s *Server) onLive(p LiveProgress) {
 	s.mu.Lock()
 	s.pending[p.Disk] = p
-	s.dirty = true
+	s.mu.Unlock()
+}
+
+// drainPending takes the frames that arrived since the last call, leaving the
+// map empty. Taking them is the whole point: see the field's comment.
+func (s *Server) drainPending() []LiveProgress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) == 0 {
+		return nil
+	}
+	out := make([]LiveProgress, 0, len(s.pending))
+	for key, p := range s.pending {
+		out = append(out, p)
+		delete(s.pending, key)
+	}
+	return out
+}
+
+// dropPending forgets a disk's queued frame, for when its round has ended.
+func (s *Server) dropPending(key string) {
+	s.mu.Lock()
+	delete(s.pending, key)
 	s.mu.Unlock()
 }
 
@@ -69,18 +100,7 @@ func (s *Server) RunPublisher(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			s.mu.Lock()
-			if !s.dirty {
-				s.mu.Unlock()
-				continue
-			}
-			snapshot := make([]LiveProgress, 0, len(s.pending))
-			for _, p := range s.pending {
-				snapshot = append(snapshot, p)
-			}
-			s.dirty = false
-			s.mu.Unlock()
-			for _, p := range snapshot {
+			for _, p := range s.drainPending() {
 				s.hub.Publish("progress", p)
 			}
 		}
