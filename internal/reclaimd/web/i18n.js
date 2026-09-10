@@ -59,7 +59,6 @@ export const DICT = {
     'live.pos': '位置', 'live.speed': '速度', 'live.drift': '延迟漂移',
     'live.eta': '预计剩余', 'live.found': '本轮发现',
     'live.dutyAria': '占空比温控表',
-    'live.dutyCaveat': '"温度计"就是读延迟本身：盘发热会升高，扫到退化区也会升高。两种都该减速，所以分不开无妨。',
     'live.found.fmt': '慢 {slow} · 危险 {danger} · 退避 {defer} 段',
 
     'map.title': '全盘延迟地图',
@@ -177,7 +176,6 @@ export const DICT = {
     'live.pos': 'Position', 'live.speed': 'Speed', 'live.drift': 'Latency drift',
     'live.eta': 'Remaining', 'live.found': 'Found so far',
     'live.dutyAria': 'Duty-cycle gauge',
-    'live.dutyCaveat': 'The thermometer is the read latency itself: it rises when the drive heats up, and when the sweep enters a degraded region. Both call for slowing down, so the two need not be told apart.',
     'live.found.fmt': '{slow} slow · {danger} danger · {defer} segments deferred',
 
     'map.title': 'Whole-drive latency map',
