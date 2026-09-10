@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -277,6 +278,18 @@ func (s *Server) views(detail bool) []DiskView {
 		}
 		out = append(out, v)
 	}
+
+	// Map order is not an order. Without this the fleet list arrives shuffled
+	// on every poll: the cards swap places under the pointer, and the disk the
+	// page selects on load is whichever one the runtime felt like yielding
+	// first. Absent disks sink to the bottom, which is the only reordering a
+	// reader should ever see and one they caused by pulling the stick.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Present != out[j].Present {
+			return out[i].Present
+		}
+		return out[i].Key < out[j].Key
+	})
 	return out
 }
 

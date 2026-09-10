@@ -1,6 +1,9 @@
 package reclaimd
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A live frame goes out once and is then forgotten.
 //
@@ -55,5 +58,36 @@ func TestScanEndDropsTheQueuedFrame(t *testing.T) {
 	got := s.drainPending()
 	if len(got) != 1 || got[0].Disk != "b" {
 		t.Fatalf("drain after SCAN_END = %+v, want only the disk still scanning", got)
+	}
+}
+
+// The fleet list used to be handed out in Go map order, which is deliberately
+// random: the cards changed places on every poll, and the disk the page selects
+// on load -- the first one in the list -- was whichever the runtime yielded
+// first. Present disks come first, then by key, and nothing else moves a card.
+func TestFleetListComesBackInAStableOrder(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	sup := &Supervisor{store: store, logger: quietLogger(), disks: map[string]*diskState{
+		"usb-c": {Key: "usb-c", Present: true},
+		"usb-a": {Key: "usb-a"},
+		"usb-b": {Key: "usb-b", Present: true},
+		"usb-d": {Key: "usb-d"},
+	}}
+	s := NewServer(mustConfig(t), store, sup, quietLogger())
+
+	const want = "usb-b usb-c usb-a usb-d"
+	for i := 0; i < 20; i++ {
+		var keys []string
+		for _, v := range s.views(false) {
+			keys = append(keys, v.Key)
+		}
+		if got := strings.Join(keys, " "); got != want {
+			t.Fatalf("call %d: order %q, want %q", i, got, want)
+		}
 	}
 }
