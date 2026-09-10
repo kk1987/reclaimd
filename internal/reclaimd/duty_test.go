@@ -1,6 +1,7 @@
 package reclaimd
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -90,5 +91,35 @@ func TestDutyRelaxesWhenLatencyRecovers(t *testing.T) {
 	if c.Factor() >= hot {
 		t.Errorf("factor stayed at %.2f after latency recovered (was %.2f while hot)",
 			c.Factor(), hot)
+	}
+}
+
+// The throughput ceiling has to hold on a disk faster than it. It used to be
+// compared with the rest already owed instead of added to it, and at the
+// default 60 MB/s a 1 MiB block falls 17ms short of the pace -- under the 20ms
+// worth a sleep -- so it never came due: a CTL ramdisk went through 512 MiB in
+// a third of a second. The second ceiling's pace is longer than DutyMaxSleep,
+// which must not cut it short either.
+func TestDutyCeilingHoldsOnAFastDisk(t *testing.T) {
+	for _, mbps := range []float64{60, 2} {
+		cfg := mustConfig(t)
+		cfg.MaxThroughputMBps = mbps
+		c := NewDutyController(cfg)
+		var rested time.Duration
+		c.sleep = func(_ context.Context, d time.Duration) error {
+			rested += d
+			return nil
+		}
+
+		const blocks, read = 1000, 500 * time.Microsecond
+		for range blocks {
+			if err := c.Pay(context.Background(), read); err != nil {
+				t.Fatal(err)
+			}
+		}
+		mib := float64(blocks*cfg.BlockSize) / (1 << 20)
+		if got := mib / (blocks*read + rested).Seconds(); got > mbps*1.01 {
+			t.Errorf("under a %.0f MB/s ceiling the disk was read at %.1f MB/s", mbps, got)
+		}
 	}
 }

@@ -22,12 +22,13 @@ import (
 // additive step would need hundreds of blocks to catch up with something that
 // happens in ten.
 type DutyController struct {
-	cfg     Config
-	factor  float64
-	debt    time.Duration
-	state   string
-	drift   float64
-	restFor time.Duration
+	cfg      Config
+	factor   float64
+	debt     time.Duration
+	paceDebt time.Duration // owed to the throughput ceiling; see Pay
+	state    string
+	drift    float64
+	restFor  time.Duration
 
 	// ref is this controller's OWN reference, and it is deliberately not the
 	// frozen threshold baseline.
@@ -48,6 +49,10 @@ type DutyController struct {
 	evals    int
 	ups      int
 	lastRoll time.Duration
+
+	// sleep is sleepCtx, and a field only so a test can add up the rest
+	// instead of taking it.
+	sleep func(context.Context, time.Duration) error
 }
 
 // settleEvals is how many evaluations pass before the duty reference is taken.
@@ -68,7 +73,8 @@ const (
 )
 
 func NewDutyController(cfg Config) *DutyController {
-	return &DutyController{cfg: cfg, factor: cfg.DutyFactorInit, state: DutyRunning, drift: 1}
+	return &DutyController{cfg: cfg, factor: cfg.DutyFactorInit, state: DutyRunning, drift: 1,
+		sleep: sleepCtx}
 }
 
 // Reference reports the latency drift is measured against, for the UI. Zero
@@ -139,31 +145,36 @@ func (c *DutyController) Evaluate(rolling, baseline time.Duration) {
 // more in wakeup overhead than it buys in rest, and gets rounded up anyway.
 // Batching into 20ms chunks is what makes the requested duty cycle the one
 // actually delivered.
+//
+// The throughput ceiling keeps a debt of its own because the two are settled
+// differently: the controller's rest is capped at DutyMaxSleep a sleep, the
+// ceiling's is paid in full, or a pace longer than that cap would leak. One
+// sleep covers both, so it lasts as long as the larger of the two.
 func (c *DutyController) Pay(ctx context.Context, last time.Duration) error {
 	c.debt += time.Duration(c.factor * float64(last))
 
 	// A hard ceiling independent of the drift signal, so a live overlay keeps
-	// headroom no matter what the controller concludes.
+	// headroom no matter what the controller concludes. What each block falls
+	// short of the pace is added up rather than compared with the debt, since a
+	// shortfall under DutyMinSleep -- at the default 60 MB/s and 1 MiB, every
+	// one -- would otherwise never come due. A read slower than the pace pays
+	// down what earlier ones owed but banks nothing, so a slow stretch cannot
+	// buy a burst after it.
 	if c.cfg.MaxThroughputMBps > 0 {
-		floor := time.Duration(float64(c.cfg.BlockSize) /
+		pace := time.Duration(float64(c.cfg.BlockSize) /
 			(c.cfg.MaxThroughputMBps * 1024 * 1024) * float64(time.Second))
-		if floor > last && floor-last > c.debt {
-			c.debt = floor - last
-		}
+		c.paceDebt = max(0, c.paceDebt+pace-last)
 	}
 
-	if c.debt < c.cfg.DutyMinSleep.Duration() {
+	if max(c.debt, c.paceDebt) < c.cfg.DutyMinSleep.Duration() {
 		c.state = DutyRunning
 		return nil
 	}
-	d := c.debt
-	if maxSleep := c.cfg.DutyMaxSleep.Duration(); d > maxSleep {
-		d = maxSleep
-	}
-	c.debt = 0
+	d := max(min(c.debt, c.cfg.DutyMaxSleep.Duration()), c.paceDebt)
+	c.debt, c.paceDebt = 0, 0
 	c.state = DutyResting
 	c.restFor = d
-	err := sleepCtx(ctx, d)
+	err := c.sleep(ctx, d)
 	c.state = DutyRunning
 	return err
 }
