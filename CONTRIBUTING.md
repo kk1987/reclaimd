@@ -16,6 +16,14 @@ go test ./...      # everything runs without root and without a real disk
 Run `gofmt -l .` and `go vet ./...` before pushing; CI runs both, plus the tests
 under `-race`.
 
+On FreeBSD, the `Live` tests read the running kernel's CAM, GEOM and devstat
+tables, which is the only check the struct offsets in `platform_freebsd.go` get:
+a wrong one compiles fine and reads garbage. The CAM test needs root.
+
+```sh
+go test -c -o /tmp/reclaimd.test ./internal/reclaimd && sudo /tmp/reclaimd.test -test.run Live
+```
+
 **No third-party dependencies.** `go.mod` has no `require` block and should stay
 that way. The binary gets installed on routers with 8 MiB of flash, `CGO_ENABLED=0`
 so it links against nothing at all, and the whole point is that it keeps working

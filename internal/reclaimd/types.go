@@ -40,8 +40,8 @@ type Presence struct {
 	Node       string       `json:"node"`        // "/dev/sda", always built from KernelName
 	Major      int          `json:"major"`
 	Minor      int          `json:"minor"`
-	SysPath    string       `json:"sys_path"` // "/sys/block/sda"
-	USBPath    string       `json:"usb_path"` // "/sys/devices/.../usb4/4-2"
+	SysPath    string       `json:"sys_path,omitempty"` // "/sys/block/sda", Linux only
+	USBPath    string       `json:"usb_path"`           // "/sys/devices/.../usb4/4-2", or "dev.umass.3"
 	SeenAt     time.Time    `json:"seen_at"`
 
 	// Ignored is set for devices found but deliberately not managed, together

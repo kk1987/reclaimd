@@ -12,8 +12,8 @@ import (
 // reads. Scanning, backoff, scheduling and the store sit above it and are the
 // same program everywhere.
 //
-// Roots is the Linux implementation. A kernel without one still builds, and
-// says so the first time it is asked for a disk.
+// Roots is the Linux implementation and freeBSD the FreeBSD one. A kernel
+// without one still builds, and says so the first time it is asked for a disk.
 type Platform interface {
 	// Discover lists every whole disk behind USB -- the ones deliberately left
 	// alone included -- with keys assigned. It must not open a device: on a
