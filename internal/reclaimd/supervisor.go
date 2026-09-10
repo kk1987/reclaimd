@@ -147,9 +147,31 @@ func (s *Supervisor) tick(ctx context.Context) {
 			_ = s.store.SaveMeta(key, st.Meta)
 		}
 	}
+	var swept []string
 	for key, st := range s.disks {
-		if !seen[key] {
-			st.Present = false
+		if seen[key] {
+			continue
+		}
+		st.Present = false
+
+		// A stick pulled before its probation ended leaves nothing worth
+		// keeping: never adopted means never scanned, so all that is on disk is
+		// the identity record discovery wrote the moment it appeared. Sweeping
+		// it is what stops disks/ growing an entry for every stick that was ever
+		// in a port for ten seconds -- and, for the ones whose key is not
+		// stable, one entry per port they were ever in.
+		//
+		// Being excluded is a decision rather than junk, so it survives the
+		// sweep. Forgetting it would mean a stick that comes back finds no
+		// record of having been switched off, and gets adopted half an hour
+		// later by the machinery its owner had already said no to.
+		if st.Meta.AdoptedAt.IsZero() && st.Meta.Enabled && !st.Scanning {
+			delete(s.disks, key)
+			if err := s.store.DeleteDisk(key); err != nil && !errors.Is(err, ErrNotFound) {
+				s.logger.Error("forget unadopted disk", "disk", key, "error", err)
+			}
+			s.logger.Info("unadopted disk went away; forgotten", "disk", key)
+			swept = append(swept, key)
 		}
 	}
 	candidates := make([]*diskState, 0, len(s.disks))
@@ -158,6 +180,9 @@ func (s *Supervisor) tick(ctx context.Context) {
 	}
 	s.mu.Unlock()
 
+	for _, key := range swept {
+		s.notifyChange(key, "FORGOTTEN")
+	}
 	for _, st := range candidates {
 		s.considerDisk(ctx, st, now)
 	}
@@ -505,6 +530,40 @@ func (s *Supervisor) SetEnabled(key string, enabled bool) error {
 		return err
 	}
 	s.notifyChange(key, "ENABLED_CHANGED")
+	return nil
+}
+
+// Forget drops a disk from the fleet and deletes everything stored under its
+// key. Refusing mid-round is not politeness: persistRound would write the
+// history straight back a moment later.
+//
+// A disk that is still plugged in comes back on the next tick as a new arrival,
+// with a fresh probation and no history. That is all forgetting can mean while
+// the stick is in the port, and the UI says so before it asks.
+func (s *Supervisor) Forget(key string) error {
+	s.mu.Lock()
+	st, ok := s.disks[key]
+	if !ok {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	if st.Scanning {
+		s.mu.Unlock()
+		return ErrScanInProgress
+	}
+	// Deleting under the same lock that guards the map is what keeps a
+	// discovery tick from slipping in between and re-creating what is on its
+	// way out.
+	err := s.store.DeleteDisk(key)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		s.mu.Unlock()
+		return err
+	}
+	delete(s.disks, key)
+	s.mu.Unlock()
+
+	s.logger.Info("disk forgotten", "disk", key)
+	s.notifyChange(key, "FORGOTTEN")
 	return nil
 }
 

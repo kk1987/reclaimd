@@ -57,15 +57,27 @@ export async function requestScan(key, iMeanIt = false) {
   return post(`/disks/${encodeURIComponent(key)}/scan`, { i_mean_it: iMeanIt });
 }
 
-async function post(path, body) {
-  const r = await fetch(BASE + path, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+/* Deletes everything the daemon has stored for one disk. The confirmation is
+   the UI's job; by the time this is called the decision has been made. */
+export async function forgetDisk(key) {
+  return send('DELETE', `/disks/${encodeURIComponent(key)}`);
+}
+
+function post(path, body) {
+  return send('POST', path, body);
+}
+
+async function send(method, path, body) {
+  const opts = { method, credentials: 'same-origin' };
+  if (body !== undefined) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(BASE + path, opts);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
+    /* The daemon answers with a code, never a sentence, so the code is what
+       the caller branches on and the message is only a fallback. */
     const e = new Error(j?.error?.message || r.statusText);
     e.code = j?.error?.code;
     throw e;

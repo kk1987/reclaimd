@@ -1,6 +1,7 @@
 package reclaimd
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -96,5 +97,136 @@ func TestCooldownOverrideClearsTheWindowAndRecordsIt(t *testing.T) {
 	st.Scanning = true
 	if err := sup.RequestScan("d", true); !errors.Is(err, ErrScanInProgress) {
 		t.Errorf("override during a running round: got %v, want ErrScanInProgress", err)
+	}
+}
+
+// A stick that is pulled before its probation ends leaves nothing worth
+// keeping, and keeping it anyway is how disks/ grows an entry for every stick
+// that was ever in a port for ten seconds -- or, for a stick with no serial, one
+// entry per port it was ever in.
+func TestTickForgetsAnUnadoptedDiskThatWasPulled(t *testing.T) {
+	f := newFakeTree(t)
+	f.addUSBNode("usb4/4-2", "090c", "1000", "0011223344556677", "4", "2")
+	f.addDisk("sda", "usb4/4-2", "0:0:0:0", "8:0", 125304832, true)
+
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	sup := NewSupervisor(mustConfig(t), store, quietLogger(), f.roots())
+	sup.tick(context.Background())
+
+	const key = "usb-090c:1000-0011223344556677"
+	if _, ok := sup.disks[key]; !ok {
+		t.Fatalf("discovery did not pick the disk up; have %v", sup.disks)
+	}
+	if keys, _ := store.ListDisks(); len(keys) != 1 {
+		t.Fatalf("state directory holds %v, want the one disk", keys)
+	}
+	if !sup.disks[key].Meta.AdoptedAt.IsZero() {
+		t.Fatal("the disk was adopted immediately; there is no probation left to test")
+	}
+
+	f.removeDisk("sda")
+	sup.tick(context.Background())
+
+	if _, ok := sup.disks[key]; ok {
+		t.Error("the disk is still in the fleet after being pulled during probation")
+	}
+	if keys, _ := store.ListDisks(); len(keys) != 0 {
+		t.Errorf("state directory still holds %v", keys)
+	}
+}
+
+// The sweep is for junk, and neither of these is junk: one has history behind
+// it, the other carries a decision. Forgetting the excluded one would mean a
+// stick that comes back finds no record of having been switched off, and gets
+// adopted half an hour later by the machinery its owner said no to.
+func TestTickKeepsAbsentDisksThatCarryHistoryOrADecision(t *testing.T) {
+	f := newFakeTree(t)
+	f.addUSBNode("usb4/4-2", "090c", "1000", "SERIAL", "4", "2")
+	f.addDisk("sda", "usb4/4-2", "0:0:0:0", "8:0", 125304832, true)
+	f.removeDisk("sda") // the tree exists; nothing is plugged into it
+
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	adopted := Meta{Identity: DiskIdentity{Key: "adopted"}, Enabled: true, AdoptedAt: time.Now()}
+	excluded := Meta{Identity: DiskIdentity{Key: "excluded"}, Enabled: false}
+	for _, m := range []Meta{adopted, excluded} {
+		if err := store.SaveMeta(m.Identity.Key, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sup := NewSupervisor(mustConfig(t), store, quietLogger(), f.roots())
+	sup.disks = map[string]*diskState{
+		"adopted":  {Key: "adopted", Present: true, Meta: adopted},
+		"excluded": {Key: "excluded", Present: true, Meta: excluded},
+	}
+	sup.tick(context.Background())
+
+	for _, key := range []string{"adopted", "excluded"} {
+		st, ok := sup.disks[key]
+		if !ok {
+			t.Fatalf("%s was swept", key)
+		}
+		if st.Present {
+			t.Errorf("%s is absent but still reports present", key)
+		}
+		if _, err := store.LoadMeta(key); err != nil {
+			t.Errorf("%s: state gone: %v", key, err)
+		}
+	}
+}
+
+// Forgetting is the one destructive thing the API can be asked for. Mid-round
+// it is refused rather than queued: persistRound would write the history
+// straight back when the round ended.
+func TestForgetRefusesMidRoundThenDeletesEverything(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const key = "usb-090c:1000-SERIAL"
+	if err := store.SaveMeta(key, Meta{Identity: DiskIdentity{Key: key}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendRound(key, RoundSummary{Seq: 1, Outcome: OutcomeClean}); err != nil {
+		t.Fatal(err)
+	}
+
+	sup := &Supervisor{store: store, logger: quietLogger(),
+		disks: map[string]*diskState{key: {Key: key, Scanning: true}}}
+
+	if err := sup.Forget(key); !errors.Is(err, ErrScanInProgress) {
+		t.Fatalf("mid-round: got %v, want ErrScanInProgress", err)
+	}
+	if keys, _ := store.ListDisks(); len(keys) != 1 {
+		t.Fatalf("the refusal deleted state anyway: %v", keys)
+	}
+	if err := sup.Forget("nosuchdisk"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown key: got %v, want ErrNotFound", err)
+	}
+
+	sup.disks[key].Scanning = false
+	if err := sup.Forget(key); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sup.disks[key]; ok {
+		t.Error("the disk is still in the fleet")
+	}
+	if keys, _ := store.ListDisks(); len(keys) != 0 {
+		t.Errorf("state directory still holds %v", keys)
+	}
+	if rounds, _ := store.ListRounds(key, 10); len(rounds) != 0 {
+		t.Errorf("round history survived: %v", rounds)
 	}
 }

@@ -300,3 +300,68 @@ func mustConfig(t *testing.T) Config {
 	}
 	return c.ForDisk(DiskIdentity{MaxSectorsKB: 1024})
 }
+
+// Deleting a disk takes its whole directory, and the key that names it comes
+// from a URL. A wildcard matches one path segment, but an escaped slash inside
+// it unescapes after routing, so what reaches the store is network text on its
+// way to an os.RemoveAll.
+func TestDeleteDiskWipesOneDiskAndRefusesATraversal(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenStore(root, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const key = "usb-090c:1000-0011223344556677"
+	if err := store.SaveMeta(key, Meta{Identity: DiskIdentity{Key: key}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSchedule(key, NewSchedule(mustConfig(t), time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(key, Event{Type: EventAdopted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveFreshness(key, []uint32{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second disk is here to prove the delete is not a state-directory wipe.
+	const other = "usb-abcd:1234-KEEPME"
+	if err := store.SaveMeta(other, Meta{Identity: DiskIdentity{Key: other}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bad := range []string{"", ".", "..", "../..", "../" + other, ".hidden",
+		"usb-090c:1000-0011223344556677/../" + other, "usb/090c"} {
+		if err := store.DeleteDisk(bad); !errors.Is(err, ErrNotFound) {
+			t.Errorf("DeleteDisk(%q) = %v, want ErrNotFound", bad, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "disks")); err != nil {
+		t.Fatalf("the disks directory did not survive the traversal attempts: %v", err)
+	}
+
+	if err := store.DeleteDisk(key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "disks", key)); !os.IsNotExist(err) {
+		t.Errorf("the disk directory is still there: %v", err)
+	}
+	if _, err := store.LoadMeta(key); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LoadMeta after delete = %v, want ErrNotFound", err)
+	}
+	keys, err := store.ListDisks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0] != other {
+		t.Errorf("ListDisks = %v, want just the other disk", keys)
+	}
+
+	// Deleting what is already gone is not an error worth a 500 upstream.
+	if err := store.DeleteDisk(key); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}

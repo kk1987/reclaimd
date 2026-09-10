@@ -264,3 +264,13 @@ func TestFindByKeyRejectsSizeMismatch(t *testing.T) {
 		t.Errorf("kernel name = %q, want sdb", p.KernelName)
 	}
 }
+
+// removeDisk unplugs a fake stick. Only the block node goes: discovery enters
+// through /sys/block and reaches a USB node only by walking up from one, so
+// this is what a pull looks like from where the daemon stands.
+func (f *fakeTree) removeDisk(name string) {
+	f.t.Helper()
+	if err := os.RemoveAll(filepath.Join(f.root, "sys", "block", name)); err != nil {
+		f.t.Fatal(err)
+	}
+}

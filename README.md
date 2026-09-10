@@ -76,6 +76,11 @@ disk in front of it, and the UI shows the derivation.
   within a superblock, which on the drive under test peaks on the last position
   of every erase block. Next to it sits the only output that asks for a human —
   segments that stayed slow for several passes and never healed.
+- **Keeps its own records tidy.** A stick pulled before its 30-minute probation
+  ends is forgotten entirely, so plugging one in for a moment does not leave a
+  state directory behind forever — nor one per USB port, which is what a stick
+  with no serial gets filed under. Anything it has adopted, or that you excluded
+  by hand, is kept until you delete it from the status page.
 - Publishes its own wear bill in the footer. Measured at roughly 9 MiB a year
   on a ten-day cadence.
 

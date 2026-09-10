@@ -113,6 +113,9 @@ p{margin:0}
 /* A control with nothing to do says so by looking like it, not by doing
    nothing when pressed. */
 .iconbtn:disabled{opacity:.35;cursor:default}
+/* The one button that destroys something says so before it is pressed, not
+   only in the dialog it opens. */
+.iconbtn[data-forget]:hover:not(:disabled){color:var(--bad);border-color:var(--bad)}
 .conn{width:9px;height:9px;border-radius:50%;background:var(--ink-3);display:inline-block}
 .conn[data-state="live"]{background:var(--ok)}
 .conn[data-state="down"]{background:var(--bad)}

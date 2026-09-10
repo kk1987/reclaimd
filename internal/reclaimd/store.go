@@ -136,6 +136,62 @@ func (s *Store) ensureDisk(key string) (string, error) {
 	return d, nil
 }
 
+// validDiskKey says whether a key is shaped like one this package produced.
+//
+// Keys reach the store from HTTP path values. A wildcard matches a single path
+// segment, but an escaped slash inside it survives routing and unescapes
+// afterwards, so what arrives is text from the network on its way to a
+// filesystem path -- and DeleteDisk turns that into an rm -rf. Everything we
+// generate comes out of sanitizeKey plus the ':' separating vendor from
+// product, and never starts with a dot, which is what rules out ".." without a
+// special case for it.
+func validDiskKey(key string) bool {
+	if key == "" || len(key) > 255 || strings.HasPrefix(key, ".") {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_', r == '.', r == '-', r == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// DeleteDisk removes everything stored under one key: identity, schedule,
+// progress, deferred bits, rounds, events, freshness and the whole latency
+// history. It is the only code in the program that deletes a disk's state, and
+// there is no undo.
+func (s *Store) DeleteDisk(key string) error {
+	if !validDiskKey(key) {
+		return ErrNotFound
+	}
+	dir := s.diskDir(key)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return ErrNotFound
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+
+	// The wear tally counts bytes written to a disk that still has a record.
+	// Left behind, it would be folded into whatever next lands on this key.
+	s.mu.Lock()
+	delete(s.written, key)
+	s.mu.Unlock()
+
+	// Same reason writeAtomic fsyncs a parent directory: on a router the power
+	// goes without warning, and an unsynced removal can come back at the next
+	// boot as a directory with half its contents.
+	if d, err := os.Open(filepath.Join(s.root, "disks")); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
 // writeAtomic writes via a temp file in the same directory, fsyncs it, renames
 // it, and then fsyncs the PARENT DIRECTORY.
 //

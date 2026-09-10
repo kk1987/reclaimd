@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 	mux.HandleFunc("GET /api/v1/disks", s.handleDisks)
 	mux.HandleFunc("GET /api/v1/disks/{key}", s.handleDisk)
+	mux.HandleFunc("DELETE /api/v1/disks/{key}", s.handleForget)
 	mux.HandleFunc("GET /api/v1/disks/{key}/rounds", s.handleRounds)
 	mux.HandleFunc("GET /api/v1/disks/{key}/events", s.handleEvents)
 	mux.HandleFunc("GET /api/v1/disks/{key}/profile", s.handleProfile)
@@ -147,15 +148,20 @@ func (s *Server) withGuards(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if r.Method == http.MethodPost {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			// No cookies are used, so there is no ambient authority to steal --
-			// but a cross-site POST should still be refused outright rather
+			// but a cross-site write should still be refused outright rather
 			// than relying on that reasoning holding forever.
 			if site := r.Header.Get("Sec-Fetch-Site"); site != "" &&
 				site != "same-origin" && site != "none" {
 				writeError(w, http.StatusForbidden, "FORBIDDEN", "cross-site request")
 				return
 			}
+		}
+		if r.Method == http.MethodPost {
+			// A JSON content type is what a cross-origin form cannot produce.
+			// DELETE carries no body and is unreachable from a form at all, so
+			// the check belongs to POST rather than to writes in general.
 			if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 				writeError(w, http.StatusUnsupportedMediaType, "VALIDATION_ERROR",
 					"expected application/json")
@@ -190,8 +196,24 @@ func (s *Server) handleDisks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"disks": s.views(false)})
 }
 
-func (s *Server) handleDisk(w http.ResponseWriter, r *http.Request) {
+// diskKey pulls the {key} wildcard out of the path and refuses anything not
+// shaped like a key this program produces. A wildcard matches one path segment,
+// but an escaped slash inside it survives routing and unescapes afterwards, so
+// what arrives here is text from the network that ends up in a filesystem path.
+func diskKey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	key := r.PathValue("key")
+	if !validDiskKey(key) {
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
+		return "", false
+	}
+	return key, true
+}
+
+func (s *Server) handleDisk(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
 	for _, v := range s.views(true) {
 		if v.Key == key {
 			writeJSON(w, http.StatusOK, v)
@@ -294,8 +316,12 @@ func (s *Server) views(detail bool) []DiskView {
 }
 
 func (s *Server) handleRounds(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
 	limit := intParam(r, "limit", 200)
-	rounds, err := s.store.ListRounds(r.PathValue("key"), limit)
+	rounds, err := s.store.ListRounds(key, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
@@ -304,9 +330,13 @@ func (s *Server) handleRounds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
 	limit := intParam(r, "limit", 200)
 	before := uint64(intParam(r, "before_id", 0))
-	events, err := s.store.ListEvents(r.PathValue("key"), limit, before)
+	events, err := s.store.ListEvents(key, limit, before)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
@@ -321,7 +351,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // makes the stacked multi-pass view affordable on a router: twelve passes cost
 // twelve requests ever, not twelve per render.
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
 	coarse := r.URL.Query().Get("res") == "coarse"
 	var seq uint64
 	if v := r.URL.Query().Get("round"); v != "" && v != "latest" {
@@ -360,7 +393,11 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 //
 // Unlike a completed pass this changes every round, so it is never cached.
 func (s *Server) handleFreshness(w http.ResponseWriter, r *http.Request) {
-	ages, err := s.store.LoadFreshness(r.PathValue("key"))
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
+	ages, err := s.store.LoadFreshness(key)
 	if errors.Is(err, ErrNotFound) {
 		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no freshness data")
 		return
@@ -380,6 +417,10 @@ func (s *Server) handleFreshness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEnabled(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -387,7 +428,7 @@ func (s *Server) handleEnabled(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
-	if err := s.sup.SetEnabled(r.PathValue("key"), body.Enabled); err != nil {
+	if err := s.sup.SetEnabled(key, body.Enabled); err != nil {
 		writeError(w, http.StatusNotFound, CodeDeviceNotFound, err.Error())
 		return
 	}
@@ -395,6 +436,10 @@ func (s *Server) handleEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
 	// Named after the CLI flag rather than something tidier like "force". The
 	// awkwardness is the point in both places: this clears a window that the
 	// last round opened because the disk misbehaved.
@@ -406,7 +451,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
-	err := s.sup.RequestScan(r.PathValue("key"), body.IMeanIt)
+	err := s.sup.RequestScan(key, body.IMeanIt)
 	switch {
 	case errors.Is(err, ErrScanInProgress):
 		writeError(w, http.StatusConflict, CodeScanInProgress,
@@ -417,6 +462,27 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// reason to go back in early.
 		writeError(w, http.StatusConflict, CodeScanSuppressed,
 			"disk is in the cooldown window the last round opened")
+	case errors.Is(err, ErrNotFound):
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
+// handleForget deletes one disk's stored state. The page asks the operator
+// first; the daemon does not ask twice, but it does refuse mid-round.
+func (s *Server) handleForget(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
+	err := s.sup.Forget(key)
+	switch {
+	case errors.Is(err, ErrScanInProgress):
+		writeError(w, http.StatusConflict, CodeScanInProgress,
+			"a round is running on this disk")
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
 	case err != nil:

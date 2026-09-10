@@ -65,7 +65,10 @@ async function boot() {
          only the detail leaves the card saying Scanning after the round ended,
          and its button disabled with it. */
       try { state.disks = await api.getDisks(); } catch (e) { /* below reports */ }
-      await refreshDetail(true);
+      /* A soft refresh keeps the profiles already in hand, which is only right
+         while the page is still looking at the same disk. */
+      const moved = reselect();
+      await refreshDetail(!moved);
     },
     onResync: () => refreshAll(),
     onStatus: setConn,
@@ -130,11 +133,23 @@ async function refreshAll() {
   try {
     state.disks = await api.getDisks();
   } catch (e) { setConn('down'); return; }
-  if (!state.selected || !state.disks.some((d) => d.key === state.selected)) {
-    state.selected = state.disks[0]?.key || null;
-  }
+  reselect();
   renderDiskbar();
   await refreshDetail();
+}
+
+/* Keeps the selection on a disk that still exists. One can leave the fleet at
+   any moment -- forgotten here or in another tab, or swept by the daemon when a
+   stick that never finished probation was pulled -- and fetching the detail for
+   a key that is gone answers 404, which the page would report as a dead
+   connection. The list arrives ordered with the present disks first, so falling
+   back to the head of it lands on a disk that is actually in a port. Returns
+   whether the selection moved, which is what tells a soft refresh that the
+   profiles it was about to keep belong to a different disk. */
+function reselect() {
+  if (state.selected && state.disks.some((d) => d.key === state.selected)) return false;
+  state.selected = state.disks[0]?.key || null;
+  return true;
 }
 
 async function refreshDetail(soft) {
@@ -228,6 +243,11 @@ function renderDiskbar() {
       : !d.enabled ? 'disk.scanNeedsMaintain'
       : 'disk.scanNow';
 
+    /* Forgetting is the only destructive thing this page can do, so it is the
+       only button that asks first. Mid-round it is refused rather than queued:
+       the round would write the history straight back when it ended. */
+    const forgettable = !scanning;
+
     el.innerHTML = `
       <div class="row"><span class="dot" data-grade="${d.health?.grade || 'unknown'}"></span>
         <h3 class="wrapy">${esc(name)}</h3></div>
@@ -244,10 +264,14 @@ function renderDiskbar() {
             role="switch" aria-checked="${d.enabled}"
             title="${esc(I.t(d.enabled ? 'disk.excludeAction' : 'disk.maintainAction'))}"
             >${d.enabled ? '◉' : '◎'}</button>
+          <button type="button" class="iconbtn" data-forget="${esc(d.key)}"
+            title="${esc(I.t(forgettable ? 'disk.forget' : 'disk.forgetScanning'))}"
+            ${forgettable ? '' : 'disabled'}>✕</button>
         </span>
       </div>`;
     el.addEventListener('click', (ev) => {
-      if (ev.target.dataset.toggle || ev.target.dataset.scan) return;
+      if (ev.target.dataset.toggle || ev.target.dataset.scan ||
+          ev.target.dataset.forget) return;
       state.selected = d.key;
       location.hash = '#/disk/' + encodeURIComponent(d.key);
       refreshDetail();
@@ -296,6 +320,26 @@ function renderDiskbar() {
         toast(I.t(d.enabled ? 'toast.disabled' : 'toast.enabled'));
         await refreshAll();
       } catch (err) { toast(err.message); }
+    });
+    el.querySelector('[data-forget]').addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      if (!forgettable) return;
+      /* A stick still in its port is rediscovered within 30 seconds, so
+         forgetting it is not the same act as forgetting an absent one and must
+         not be described as if it were: the history goes, the disk comes back
+         as a stranger and starts its probation over. */
+      if (!confirm(I.t(d.present ? 'confirm.forgetPresent' : 'confirm.forget', { name }))) return;
+      ev.currentTarget.disabled = true;
+      try {
+        await api.forgetDisk(d.key);
+        if (state.selected === d.key) state.selected = null;
+        toast(I.t('toast.forgotten'));
+        await refreshAll();
+      } catch (err) {
+        if (err.code === 'SCAN_IN_PROGRESS') toast(I.t('disk.scanRunning'));
+        else toast(err.message);
+        renderDiskbar();
+      }
     });
     bar.appendChild(el);
   }
