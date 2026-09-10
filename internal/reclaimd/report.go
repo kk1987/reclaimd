@@ -193,7 +193,7 @@ func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskId
 		Value:   float64(readSize) / 1024,
 		Unit:    "KiB",
 		Reason:  readReason,
-		Formula: "largest power of two <= max_sectors_kb, capped at 1 MiB",
+		Formula: "largest power of two <= the kernel's per-command limit, capped at 1 MiB",
 		Params: map[string]any{
 			"max_sectors_kb": id.MaxSectorsKB,
 			"split":          id.MaxSectorsKB > 0 && readSize > id.MaxSectorsKB*1024,
