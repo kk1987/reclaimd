@@ -24,7 +24,7 @@ load_rc_config $name
 : ${reclaimd_nice:="10"}
 
 # Runs as root: discovery reads CAM's device table through /dev/xpt0, which
-# nothing else may open.
+# only root may open.
 required_files="/usr/local/bin/${name}"
 pidfile="/var/run/${name}.pid"
 # The pidfile holds daemon(8)'s own pid, and rc.subr matches that process by

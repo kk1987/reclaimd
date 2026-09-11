@@ -1,19 +1,19 @@
 # Optional. Serves the status page through an nginx that is already on the box,
-# so the daemon can stay on 127.0.0.1 and needs no config of its own -- no
+# so the daemon can stay on 127.0.0.1 and needs no config of its own: no
 # listen_addr, no ui_token, no restart.
 #
 # Install to /etc/nginx/conf.d/reclaimd.locations. The extension matters: on
-# OpenWrt the generated uci.conf includes conf.d/*.locations INSIDE the default
+# OpenWrt the generated uci.conf includes conf.d/*.locations inside the default
 # `_lan` server, so these locations land there automatically. A file named
 # *.conf is included in http{} instead and would need its own server block.
 #
 #   /etc/init.d/nginx reload   ->   https://<router>/reclaimd/
 #
 # The `include restrict_locally` lines are what let this same file be included
-# by hand into a server block that faces the internet -- a vhost with a real
-# certificate, say -- without publishing the page along with it. That file ships
-# with OpenWrt's nginx and allows RFC1918 and link-local only. On a distro that
-# does not have it, drop the includes or write the equivalent allow/deny rules.
+# by hand into a server block that faces the internet, say a vhost with a real
+# certificate, without publishing the page along with it. That file ships with
+# OpenWrt's nginx and allows RFC1918 and link-local only. On a distro that does
+# not have it, drop the includes or write the equivalent allow/deny rules.
 #
 # Behind a gateway that does NAT reflection, check which address the proxy
 # actually sees for LAN clients before trusting this: a reflected connection is
@@ -24,7 +24,7 @@ location = /reclaimd { return 301 /reclaimd/; }
 
 # The event stream stays open for the length of a pass, which on a slow stick
 # is hours. Buffering it would hold every progress update until the pass ended,
-# which is the one time the page is worth watching.
+# and a running pass is the one time the page is worth watching.
 location = /reclaimd/api/v1/stream {
     include restrict_locally;
 

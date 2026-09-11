@@ -43,7 +43,7 @@ body:
       label: The drive
       description: >
         Output of `reclaimd list`. Redact the serial if you would rather not
-        publish it — the key alone is enough to follow the report.
+        publish it. The key alone is enough to follow the report.
       render: text
 
   - type: textarea

@@ -12,7 +12,7 @@ Restart=on-failure
 RestartSec=30
 # A single pread can block for the controller's ~1.8s hang, and the SCSI layer
 # gives up only after 30s. Anything under 45 gets us SIGKILLed mid-syscall
-# during a hang -- the one moment when persisting clean state matters most.
+# during a hang, which is exactly when persisting clean state matters most.
 TimeoutStopSec=45
 UMask=0077
 
@@ -29,13 +29,13 @@ SupplementaryGroups=disk
 # the daemon could not do its job at all.
 PrivateDevices=no
 DevicePolicy=closed
-# The device NAME is not stable -- sda becomes sdb after a re-enumeration -- so
-# a path here would stop matching at the worst possible moment. The group name
+# The device name is not stable: sda becomes sdb after a re-enumeration, so a
+# path here would stop matching at the worst possible moment. The group name
 # "sd" comes from /proc/devices and covers majors 8, 65-71 and 128-135.
 #
-# The permission is "r", not "rw": that makes read-only a property the kernel
-# enforces on the cgroup, rather than a promise our own O_RDONLY flag makes.
-# The refresh job, which genuinely needs to write, ships as a separate unit.
+# The permission is "r" only, which makes read-only a property the kernel
+# enforces on the cgroup. Our own O_RDONLY flag is only a promise. The refresh
+# job, which genuinely needs to write, ships as a separate unit.
 DeviceAllow=block-sd r
 
 # ---- filesystem ----
@@ -75,8 +75,8 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount @debug @module @reboot @swap @obsolete
 
 # systemd applies this before exec, so the scanner gets idle I/O priority
-# without us calling ioprio_set -- which would have forced @resources back into
-# the filter above and needed per-architecture syscall numbers.
+# without us calling ioprio_set. That call would have forced @resources back
+# into the filter above and needed per-architecture syscall numbers.
 IOSchedulingClass=idle
 
 [Install]

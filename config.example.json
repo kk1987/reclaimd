@@ -1,24 +1,24 @@
 {
-  "_comment": "Every value here is optional. The daemon derives its own thresholds and its own schedule from the disk in front of it; these exist so the derivation can be inspected and overridden, not because anything needs setting. Run reclaimd with no config at all and it works.",
+  "_comment": "Every value here is optional. The daemon derives its own thresholds and its own schedule from the disk in front of it. These exist so the derivation can be inspected and overridden. Run reclaimd with no config at all and it works.",
 
   "listen_addr": "127.0.0.1:8099",
-  "_listen_addr": "Loopback by default. Binding to a LAN address should be paired with ui_token: an unauthenticated status page reachable from the network ought to be a decision, not an oversight.",
+  "_listen_addr": "Loopback by default. Binding to a LAN address should be paired with ui_token. Leaving the page unauthenticated on the network should be a deliberate decision.",
 
   "ui_token": "",
   "_ui_token": "Bearer token required on every request when set. Only needed off loopback.",
 
   "state_dir": "/var/lib/reclaimd",
-  "_state_dir": "MUST be persistent. On OpenWrt /var is a symlink to /tmp, so pass -state-dir /root/reclaimd there. The daemon warns loudly when it detects tmpfs, because the failure mode is silent: the schedule and the post-dropout suppression reset at every reboot.",
+  "_state_dir": "Must be persistent. On OpenWrt /var is a symlink to /tmp, so pass -state-dir /root/reclaimd there. The daemon warns loudly when it detects tmpfs, because the failure mode is silent: the schedule and the post-dropout suppression reset at every reboot.",
 
   "adopt_after": "30m",
   "_adopt_after": "How long a disk must stay plugged in before it is maintained. Keeps a stick you plugged in to copy one file out of the schedule.",
 
   "block_size": 0,
-  "_block_size": "0 means derive it per disk: the largest power of two that still fits in one SCSI command, from that disk's own max_sectors_kb, capped at 1 MiB. A read the kernel has to split is timed as the sum of several commands, which lifts the disk's p50 by the same factor and takes the thresholds derived from it along. The drive in the forensics reports 1 MiB; a USB 2.0 stick behind usb-storage reports 120 KiB and gets 64 KiB blocks. Set it only to reproduce a past measurement -- it must be a power of two between 4096 and 1048576.",
+  "_block_size": "0 means derive it per disk: the largest power of two that still fits in one SCSI command, from that disk's own max_sectors_kb, capped at 1 MiB. A read the kernel has to split is timed as the sum of several commands, which lifts the disk's p50 by the same factor and takes the thresholds derived from it along. The drive in the forensics reports 1 MiB. A USB 2.0 stick behind usb-storage reports 120 KiB and gets 64 KiB blocks. Set it only to reproduce a past measurement. It must be a power of two between 4096 and 1048576.",
 
   "slow_factor": 5,
   "danger_factor": 50,
-  "_factors": "Multipliers on the disk's own learned p50, not fixed milliseconds -- the right number differs per disk. Against a 10ms baseline they produce 50ms and 500ms, which is where the two interesting populations actually sit.",
+  "_factors": "Multipliers on the disk's own learned p50, because the right number of milliseconds differs per disk. Against a 10ms baseline they produce 50ms and 500ms, which is where the two interesting populations sit.",
 
   "segment_size": 33554432,
   "_segment_size": "32 MiB, the NAND superblock: 90.5% of extreme-latency blocks land on offset mod 32 MiB == 31, the last wordline of an erase block. Backing off in units of the physical layout is what makes a single skip sufficient.",
@@ -32,5 +32,5 @@
   "scan_interval_init": "168h",
   "scan_interval_min": "12h",
   "scan_interval_max": "720h",
-  "_scan_interval": "Starting point and clamps for the multiplicative policy: clean x1.5, slow x0.7, dropout x0.5. The floor stops a sick disk being scanned into the ground; the ceiling stops a healthy one aging past the retention window this tool exists to defend."
+  "_scan_interval": "Starting point and clamps for the multiplicative policy: clean x1.5, slow x0.7, dropout x0.5. The floor stops a sick disk being scanned into the ground. The ceiling stops a healthy one aging past the retention window this tool exists to defend."
 }

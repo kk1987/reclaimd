@@ -10,10 +10,10 @@ USE_PROCD=1
 PROG=/usr/bin/reclaimd
 CONF=/etc/reclaimd/config.json
 
-# NOT /var/lib. On OpenWrt /var is a symlink to /tmp, so state written there is
-# lost at every reboot -- taking the schedule and, far worse, the post-dropout
-# suppression window with it. The only symptom would be a daemon that never
-# quite seems to work. /root is on the overlay and persists.
+# Not /var/lib. On OpenWrt /var is a symlink to /tmp, so state written there is
+# lost at every reboot. That takes the schedule with it, and worse, the
+# post-dropout suppression window. The only symptom would be a daemon that
+# never quite seems to work. /root is on the overlay and persists.
 STATE=/root/reclaimd
 
 start_service() {
@@ -26,7 +26,7 @@ start_service() {
     # The scanner is deliberately the lowest-priority thing on the box.
     procd_set_param nice 10
     procd_set_param file "$CONF"
-    # respawn threshold / timeout / retries; 0 retries means keep trying.
+    # respawn threshold / timeout / retries, where 0 retries means keep trying.
     procd_set_param respawn 3600 5 0
     # A single pread can block for the controller's ~1.8s watchdog hang, and the
     # SCSI layer's own timeout is 30s. procd's default 5s would SIGKILL us
