@@ -538,9 +538,17 @@ function renderEvents() {
     const li = document.createElement('li');
     const at = e.offset ? I.t('event.at', { off: I.fmtMiB(e.offset / (1 << 20)) }) : '';
     const params = I.fmtParams(e.params);
-    const extra = Object.entries(params)
+    const parts = Object.entries(params)
       .filter(([k]) => !['offsetMib'].includes(k))
-      .slice(0, 3).map(([k, v]) => `${k}=${v}`).join(' · ');
+      .slice(0, 3).map(([k, v]) => `${k}=${v}`);
+    /* Worked out here rather than stored, so every pass already in the log gets
+       one too: what the pass read over how long it ran, rests and the re-probe
+       wait included. */
+    const raw = e.params || {};
+    if (e.type === 'ROUND' && raw.read_mib > 0 && raw.elapsed_s > 0) {
+      parts.push(`avgSpeed=${I.fmtSpeed(raw.read_mib / raw.elapsed_s)}`);
+    }
+    const extra = parts.join(' · ');
     li.innerHTML = `<time datetime="${new Date(e.ts).toISOString()}">${
       I.fmtStamp(new Date(e.ts).getTime() / 1000)}</time>
       <span class="chip" data-t="${esc(e.type)}">${esc(I.t('event.' + e.type))}</span>
