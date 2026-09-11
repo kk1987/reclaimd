@@ -317,10 +317,14 @@ func (s *Supervisor) runRound(ctx, roundCtx context.Context, st *diskState, in R
 	}
 	defer dev.Close()
 
-	if err := dev.WarmUp(ctx, s.cfg.WarmupDiscard); err != nil {
+	suspended, err := dev.WarmUp(ctx, s.cfg.WarmupDiscard)
+	if err != nil {
 		s.logger.Error("warm up", "disk", st.Key, "error", err)
 		s.setErr(st, err)
 		return
+	}
+	if suspended {
+		s.logger.Info("device was autosuspended before warm-up", "disk", st.Key)
 	}
 
 	if bits, err := s.store.LoadDeferred(st.Key); err == nil {
@@ -546,8 +550,12 @@ func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (Roun
 		return RoundSummary{}, err
 	}
 	defer dev.Close()
-	if err := dev.WarmUp(ctx, s.cfg.WarmupDiscard); err != nil {
+	suspended, err := dev.WarmUp(ctx, s.cfg.WarmupDiscard)
+	if err != nil {
 		return RoundSummary{}, err
+	}
+	if suspended {
+		s.logger.Info("device was autosuspended before warm-up", "disk", key)
 	}
 
 	in := RoundInput{Key: key, Dev: dev, Presence: p, Schedule: sched,
@@ -634,10 +642,11 @@ func (s *Supervisor) Forget(key string) error {
 	return nil
 }
 
-// RequestScan asks for a round now. Suppression still applies. Asking is for
+// RequestScan asks for a round now. Suppression still applies: asking is for
 // impatience, and impatience does not get to override a safety window that
-// exists because the disk just took a filesystem down with it. The waits
-// before a round nobody asked for do not apply. See ScanRequested.
+// exists because the disk just took a filesystem down with it. force is the
+// one exception, and it is logged as such below. The waits before a round
+// nobody asked for do not apply. See ScanRequested.
 func (s *Supervisor) RequestScan(key string, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

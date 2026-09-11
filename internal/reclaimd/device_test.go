@@ -58,7 +58,7 @@ func TestRealDeviceReadLatency(t *testing.T) {
 	}
 	defer dev.Close()
 
-	if err := dev.WarmUp(context.Background(), 8); err != nil {
+	if _, err := dev.WarmUp(context.Background(), 8); err != nil {
 		t.Fatalf("warm up: %v", err)
 	}
 	var total time.Duration

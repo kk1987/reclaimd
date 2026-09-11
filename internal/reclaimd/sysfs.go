@@ -55,8 +55,9 @@ func readSysInt(path string) int64 {
 //
 // For a plain USB stick that is four levels up (LUN -> target -> host ->
 // interface -> device), but card readers and hubs change the depth, so the
-// loop is bounded only by reaching the sysfs devices root. Hardcoding four
-// levels works right up until the day somebody plugs in a hub.
+// loop walks until it reaches the sysfs devices root, with 24 steps as a
+// backstop. Hardcoding four levels works right up until the day somebody
+// plugs in a hub.
 func resolveUSBParent(devicePath, sysRoot string) string {
 	stop := filepath.Join(sysRoot, "devices")
 	p := devicePath

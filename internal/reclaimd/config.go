@@ -107,9 +107,9 @@ type Config struct {
 	// ---- backoff ----
 
 	// SegmentSize is the NAND superblock inferred from the forensics: 90.5% of
-	// extreme-latency blocks land on offset mod 32 MiB == 31, the last wordline
-	// of an erase block. Backing off in units of the physical layout is what
-	// makes a single skip enough.
+	// extreme-latency blocks land in its last 1 MiB (block 31 of 32 at 1 MiB
+	// blocks), the last wordline of an erase block. Backing off in units of the
+	// physical layout is what makes a single skip enough.
 	SegmentSize int64 `json:"segment_size"`
 
 	// SlowSkipSegments is 1, giving at least 32 MiB of clearance past a slow

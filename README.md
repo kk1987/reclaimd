@@ -29,8 +29,8 @@ that one drive's number and not a universal constant.
   went 110 → 10 → 1 dropouts and 1181 → 258 → 26 slow blocks. Of the 347
   blocks over 500 ms in pass one, 345 read normally in pass two.
 - Degradation follows the physical layout, not the filesystem: 90.5% of the
-  extreme blocks sit at `offset mod 32 MiB == 31`, the last wordline of an
-  erase block and the most fragile place on the die.
+  extreme blocks sit in the last 1 MiB of a 32 MiB superblock, the last
+  wordline of an erase block and the most fragile place on the die.
 - After rewriting a region, reading it back was flawless at full 135 MiB/s.
 - Writing is not immune either. A whole-drive rewrite dropped the device at
   12.6 GiB with the same clean `USB disconnect`, this time on a
@@ -291,9 +291,10 @@ that found 110 dropouts. If the drive is going to carry something that cannot
 survive a dropout, such as a router's overlay filesystem, do that first pass
 while it is still just a stick in a laptop.
 
-Making the filesystem and copying the data on is itself a full-drive write, so a
-freshly provisioned drive starts refreshed. From there the daemon only has to
-keep it that way.
+Making the filesystem and copying the data on rewrites every block that now
+holds data, so on a freshly provisioned drive the data starts refreshed and
+the daemon only has to keep it that way. Blocks the copy did not touch are only
+as fresh as whatever they held before, and the first pass reads those too.
 
 ## Deliberately not done
 

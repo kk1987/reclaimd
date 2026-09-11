@@ -87,8 +87,8 @@ async function send(method, path, body) {
   const r = await fetch(BASE + path, opts);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    /* The daemon answers with a code, never a sentence, so the code is what
-       the caller branches on and the message is only a fallback. */
+    /* The daemon answers with a code and a message. The code is what the
+       caller branches on, and the message is only a fallback. */
     const e = new Error(j?.error?.message || r.statusText);
     e.code = j?.error?.code;
     throw e;

@@ -81,8 +81,9 @@ func main() {
 			os.Exit(1)
 		}
 		if !asked {
-			// procd restarts a service that exits 0, so a daemon that has
-			// finished for any recoverable reason must still report failure.
+			// systemd's Restart=on-failure only restarts a non-zero exit, so a
+			// daemon that has finished for any recoverable reason must still
+			// report failure. procd respawns regardless of the exit code.
 			os.Exit(1)
 		}
 
@@ -307,8 +308,8 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		// Deliberately long: the SSE stream is a long-lived response and a
-		// write timeout would sever it every few seconds.
+		// Deliberately disabled: the SSE stream is a long-lived response, and
+		// a write timeout would cut it off once per timeout period.
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}

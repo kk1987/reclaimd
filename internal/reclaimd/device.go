@@ -154,31 +154,31 @@ func (d *Device) classify(err error) error {
 	return err
 }
 
-// WarmUp burns throwaway reads before timing starts.
+// WarmUp burns throwaway reads before timing starts, and reports whether the
+// device was autosuspended when they began.
 //
 // A stick left at power/control=auto with a short autosuspend delay pays the
 // USB resume cost on the first read after an idle gap. Recorded, that becomes
 // a phantom slow block. Worse, it lands during warm-up and poisons the baseline
 // that warm-up exists to establish.
-func (d *Device) WarmUp(ctx context.Context, discard int) error {
+func (d *Device) WarmUp(ctx context.Context, discard int) (bool, error) {
 	suspended := readSysString(filepath.Join(d.presence.USBPath, "power", "runtime_status"))
 	for i := 0; i < discard; i++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return false, err
 		}
 		if _, err := d.ReadBlock(int64(i) * int64(d.blockSize)); err != nil {
-			return err
+			return false, err
 		}
 	}
-	if suspended == "suspended" {
-		// Not an error, but worth a breadcrumb: it explains any first-round
-		// baseline that looks slightly high compared with the stored one.
-		return nil
-	}
-	return nil
+	// Not an error, but worth telling the caller: a resume during warm-up
+	// explains a first-round baseline that looks slightly high compared with
+	// the stored one.
+	return suspended == "suspended", nil
 }
 
-// WaitForReattach re-enumerates sysfs until the same identity comes back.
+// WaitForReattach polls the platform's discovery until the same identity comes
+// back.
 //
 // Nothing resumes scanning afterwards, since the round is over either way.
 // This exists to record the recovery latency and, more importantly, to confirm

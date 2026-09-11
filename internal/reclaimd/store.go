@@ -30,7 +30,7 @@ type Meta struct {
 }
 
 // Progress is the small, frequently-fsynced record. It is deliberately separate
-// from Schedule so that the write on the dropout path stays under 200 bytes:
+// from Schedule so that the write on the dropout path stays around 200 bytes:
 // that write has to survive a power cut in the next second, and a small file is
 // a faster and more atomic thing to force to the medium.
 type Progress struct {
@@ -595,7 +595,7 @@ func seqOf(name string) uint64 {
 // SaveFreshness records, per segment, when this tool last read it successfully.
 //
 // It is one uint32 of Unix seconds per segment: 1912 segments for the reference
-// stick, so 7.6 KiB rewritten once per pass. Segments the pass skipped keep
+// stick, so 7.5 KiB rewritten once per pass. Segments the pass skipped keep
 // their old timestamp, which is the point: the map is meant to show what has
 // not been refreshed lately.
 func (s *Store) SaveFreshness(key string, ages []uint32) error {

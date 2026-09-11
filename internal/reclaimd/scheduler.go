@@ -224,10 +224,13 @@ func (s Schedule) Due(now time.Time) (bool, string) {
 
 // RebaseIfClockUnsynced repairs a schedule written against a bogus clock.
 //
-// Two symptoms are handled: an absolute timestamp far in the future (written
-// before NTP, when "now" was 1970) and a LastRoundAt in the future (the clock
+// Two symptoms are handled: a NextScanAt more than an interval and a day out
+// (the schedule was written while the clock ran ahead of real time, or the
+// clock has gone backwards since) and a LastRoundAt in the future (the clock
 // went backwards). Both are fixed the same way: discard the absolute value
 // and re-derive it from the interval, which is the part that is still valid.
+// A schedule written before NTP against a 1970 clock is not this case: its
+// NextScanAt sits in the past, so the round simply falls due at once.
 func (s Schedule) RebaseIfClockUnsynced(now time.Time) (Schedule, bool) {
 	if now.Before(SanityEpoch) {
 		return s, false // caller must wait for NTP, nothing sane to compute yet

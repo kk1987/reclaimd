@@ -105,8 +105,8 @@ func (c *cancellingDisk) ReadBlock(off int64) (time.Duration, error) {
 }
 
 // seedSuperblockTails degrades the last block of every Nth segment, which is
-// where 90.5% of the extreme-latency blocks landed in the forensics:
-// offset mod 32 MiB == 31, the last wordline of an erase block.
+// where 90.5% of the extreme-latency blocks landed in the forensics: the last
+// 1 MiB of a 32 MiB superblock, the last wordline of an erase block.
 func (f *fakeDisk) seedSuperblockTails(perSeg int, everyNth int, lat time.Duration) int {
 	n := 0
 	blocks := f.size / int64(f.blockSize)

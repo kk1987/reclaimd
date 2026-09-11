@@ -21,7 +21,7 @@
   "_factors": "Multipliers on the disk's own learned p50, because the right number of milliseconds differs per disk. Against a 10ms baseline they produce 50ms and 500ms, which is where the two interesting populations sit.",
 
   "segment_size": 33554432,
-  "_segment_size": "32 MiB, the NAND superblock: 90.5% of extreme-latency blocks land on offset mod 32 MiB == 31, the last wordline of an erase block. Backing off in units of the physical layout is what makes a single skip sufficient.",
+  "_segment_size": "32 MiB, the NAND superblock: 90.5% of extreme-latency blocks land in its last 1 MiB (block 31 of 32 at 1 MiB blocks), the last wordline of an erase block. Backing off in units of the physical layout is what makes a single skip sufficient.",
 
   "reprobe_delay": "10m",
   "_reprobe_delay": "Must outlast the controller's read cache, which dmesg reports as enabled for the drive under test. An immediate re-read would be served from that buffer and report a healed block that was never touched.",

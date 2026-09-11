@@ -47,7 +47,8 @@ export function connect(handlers) {
 
   /* The gate that matters most for an unattended tab: after a minute hidden,
      drop the connection entirely. It costs the router nothing to have nobody
-     watching, and EventSource reconnects the moment the tab is visible again. */
+     watching, and the handler below reopens the stream the moment the tab is
+     visible again. */
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       hideTimer = setTimeout(() => { close(); handlers.onStatus?.('idle'); }, HIDE_GRACE_MS);

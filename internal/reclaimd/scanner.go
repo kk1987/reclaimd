@@ -482,8 +482,8 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 		return 0, 0
 	}
 	if len(entries) > s.cfg.ReprobeMax {
-		// Probe the ones that stopped the round. Probing all of them would be
-		// a second sweep's worth.
+		// Probe the first ReprobeMax in sweep order. Probing all of them would
+		// be a second sweep's worth.
 		entries = entries[:s.cfg.ReprobeMax]
 	}
 
