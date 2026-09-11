@@ -3,6 +3,7 @@ package reclaimd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"syscall"
 	"testing"
 )
@@ -19,6 +20,9 @@ type fakeRefreshDev struct {
 	readErr   map[int64]error // a media error that leaves the device present
 	alive     bool
 	reopenErr error
+	// beforeWrite runs at the top of every write, dropouts included, so a test
+	// can act at a chosen point mid-pass -- cancel the context, say.
+	beforeWrite func(off int64)
 
 	opens, closes, syncs int
 }
@@ -42,6 +46,11 @@ func (d *fakeRefreshDev) reopen() reopenFunc {
 	return func(ctx context.Context) (refreshTarget, error) {
 		if d.reopenErr != nil {
 			return nil, d.reopenErr
+		}
+		// WaitForReattach sleeps on the context, so a cancel comes out of it
+		// wrapped in the reattach error.
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("device did not return after a refresh dropout: %w", err)
 		}
 		d.alive = true
 		return d.open(), nil
@@ -70,6 +79,9 @@ func (h *fakeHandle) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (h *fakeHandle) WriteAt(p []byte, off int64) (int, error) {
+	if h.dev.beforeWrite != nil {
+		h.dev.beforeWrite(off)
+	}
 	if h.dead {
 		return 0, syscall.ENODEV
 	}
@@ -97,7 +109,13 @@ const rBlk = int64(1 << 20)
 func runRewrite(t *testing.T, d *fakeRefreshDev, blocks int64, rewrite bool,
 	maxDrops int) (refreshStats, error) {
 	t.Helper()
-	return rewriteRange(context.Background(), quietLogger(), d.open(), d.reopen(),
+	return runRewriteCtx(t, context.Background(), d, blocks, rewrite, maxDrops)
+}
+
+func runRewriteCtx(t *testing.T, ctx context.Context, d *fakeRefreshDev, blocks int64,
+	rewrite bool, maxDrops int) (refreshStats, error) {
+	t.Helper()
+	return rewriteRange(ctx, quietLogger(), d.open(), d.reopen(),
 		func() bool { return d.alive }, make([]byte, rBlk),
 		0, blocks*rBlk, rBlk, rewrite, maxDrops)
 }
@@ -214,6 +232,70 @@ func TestRefreshTreatsEIOAsDropoutWhenDeviceIsGone(t *testing.T) {
 	}
 	if d.written[5*rBlk] == 0 {
 		t.Error("block was never written after the device came back")
+	}
+}
+
+// Ctrl-C ends the pass at the next block boundary: the write in flight lands,
+// nothing after it starts, and the exclusive handle is released on the way
+// out. What remains is a drive rewritten up to an offset the log names, the
+// only state an interrupted rewrite may leave.
+func TestRefreshStopsAtBlockBoundaryWhenCancelled(t *testing.T) {
+	d := newFakeRefreshDev()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.beforeWrite = func(off int64) {
+		if off == 5*rBlk {
+			cancel()
+		}
+	}
+
+	st, err := runRewriteCtx(t, ctx, d, 16, false, 8)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+	if want := int64(6 * rBlk); st.Written != want {
+		t.Errorf("written = %d, want %d: the block in flight finishes, nothing after it",
+			st.Written, want)
+	}
+	if d.written[6*rBlk] != 0 {
+		t.Error("a block was written after the cancel")
+	}
+	if d.closes != d.opens {
+		t.Errorf("opens = %d, closes = %d; the exclusive handle must be released",
+			d.opens, d.closes)
+	}
+}
+
+// A cancel that lands while the device is off the bus is not a failed
+// reattach: it is still the operator stopping the job, and the block that
+// dropped the bus is still the one to resume from.
+func TestRefreshCancelledDuringReattachIsStillACancel(t *testing.T) {
+	d := newFakeRefreshDev()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.dropWrite[3*rBlk] = 1
+	d.beforeWrite = func(off int64) {
+		if off == 3*rBlk {
+			cancel()
+		}
+	}
+
+	st, err := runRewriteCtx(t, ctx, d, 16, false, 8)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+	if st.Dropouts != 1 {
+		t.Errorf("dropouts = %d, want 1", st.Dropouts)
+	}
+	if want := int64(3 * rBlk); st.Written != want {
+		t.Errorf("written = %d, want %d", st.Written, want)
+	}
+	if d.written[3*rBlk] != 0 {
+		t.Error("the dropped block was written after the cancel")
+	}
+	if d.closes != d.opens {
+		t.Errorf("opens = %d, closes = %d; the handle must be closed on the way out",
+			d.opens, d.closes)
 	}
 }
 

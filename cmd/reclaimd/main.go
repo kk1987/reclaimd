@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -125,11 +126,18 @@ func main() {
 			logger.Error("bad -range", "error", err)
 			os.Exit(1)
 		}
-		err = reclaimd.Refresh(context.Background(), cfg, reclaimd.DefaultPlatform(), logger,
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = reclaimd.Refresh(ctx, cfg, reclaimd.DefaultPlatform(), logger,
 			reclaimd.RefreshOpts{
 				Key: *disk, Confirm: *confirm, Mode: *mode, IMeanIt: *iMeanIt,
 				Start: start, End: end, DryRun: *dryRun,
 			})
+		stop()
+		if errors.Is(err, context.Canceled) {
+			// Stopped at a block boundary on the operator's signal. The log
+			// already says where, and the -range that resumes from there.
+			os.Exit(1)
+		}
 		if err != nil {
 			logger.Error("refresh refused", "error", err)
 			os.Exit(1)
@@ -194,14 +202,8 @@ func runScan(cfg reclaimd.Config, logger *slog.Logger, disk string, force bool) 
 	}
 	defer store.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
-		cancel()
-	}()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultPlatform())
 	sum, err := sup.ScanOnce(ctx, disk, force)

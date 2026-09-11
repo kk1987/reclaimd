@@ -174,6 +174,10 @@ reclaimd refresh -disk=<key> -confirm=<serial> -dry-run
 reclaimd refresh -disk=<key> -confirm=<serial> -range=9000000000:11000000000
 ```
 
+Ctrl-C stops a rewrite at the next block boundary. In rewrite mode nothing is
+lost — the drive is simply refreshed up to an offset — and the last line logged
+carries the `-range` that picks up from there.
+
 The status page assembles both of those for the disk being viewed, with the key
 and the serial already filled in, next to the freshness map that is the reason
 to run one. It only ever produces text to copy: there is no `refresh` over HTTP,

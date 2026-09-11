@@ -187,10 +187,20 @@ func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
 	var st refreshStats
 	t0 := time.Now()
 
+	// interrupted is the exit an operator chooses. It leaves the drive
+	// part-rewritten, so the line says exactly where to pick up: off is the
+	// first block not yet written back, whatever mix of writes, skips and
+	// retries got here.
+	interrupted := func(off int64) error {
+		logger.Warn("refresh interrupted; the drive is part-rewritten",
+			"offset", off, "resume_range", fmt.Sprintf("%d:%d", off, end))
+		return ctx.Err()
+	}
+
 	for off := start; off < end; off += blockSize {
-		if err := ctx.Err(); err != nil {
+		if ctx.Err() != nil {
 			tgt.Close()
-			return st, err
+			return st, interrupted(off)
 		}
 		if rewrite {
 			if _, err := tgt.ReadAt(buf, off); err != nil {
@@ -236,6 +246,11 @@ func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
 		}
 		next, err := reopen(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				// Still the operator's choice, and the block that dropped the
+				// bus is still the one to pick up from.
+				return st, interrupted(off)
+			}
 			return st, err
 		}
 		tgt = next
