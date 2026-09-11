@@ -3,6 +3,10 @@
    No web fonts are loaded: this runs on a router that may have no route to the
    internet, and the CJK fallbacks below are all locally installed faces. */
 :root{
+  /* The page's own theme, not the system's, decides how the browser draws its
+     native parts. Declaring "light dark" left that to the system, so a dark
+     desktop put a dark scrollbar under the disk cards on the light page. */
+  color-scheme:light;
   /* Light by default. Contrast ratios below were measured, not eyeballed:
      every text colour clears 4.5:1 on its own ground, and the heat ramp is
      monotonically darker at every step so severity survives greyscale and
@@ -57,6 +61,7 @@
    also cover @media (prefers-color-scheme:dark){:root:not([data-theme="light"])}
    if you would rather it follow the system again. */
 :root[data-theme="dark"]{
+  color-scheme:dark;
   --bg:#0b1215; --surface:#121e22; --surface-2:#18262b; --sunk:#0d181c;
   --line:#243539; --line-2:#2f454b;
   --ink:#e3edef; --ink-2:#aec1c6; --ink-3:#8ba1a8;
