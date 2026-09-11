@@ -302,13 +302,14 @@ func (rw *Rewriter) Run(ctx context.Context, req rewriteRequest) RewriteResult {
 	}
 	for _, m := range mounts {
 		if m.FSType != "f2fs" {
-			// ext4 keeps its superblock and group descriptors pinned in the
-			// block device's page cache, and a raw write underneath them
-			// leaves an error on that cache that ext4 later reads as a
-			// failed metadata writeback, at which point it can go read-only.
-			// f2fs keeps its metadata in its own inodes and has no such
-			// collision. Nothing else has been checked, so nothing else is
-			// allowed.
+			// ext4 keeps its superblock buffer pinned in the block device's
+			// page cache. A direct write that cannot invalidate that page
+			// sets a writeback error on the device (dio_warn_stale_pagecache
+			// in mm/filemap.c), jbd2 aborts the journal the next time it
+			// takes write access to a buffer (jbd2_check_fs_dev_write_error),
+			// and the filesystem goes read-only. f2fs keeps its metadata in
+			// its own inodes and has no such collision. Nothing else has been
+			// checked, so nothing else is allowed.
 			res.Code = CodeRewriteUnsupportedFS
 			res.Err = fmt.Errorf("%s is mounted at %s as %s; only f2fs can be rewritten live",
 				m.Source, m.Point, m.FSType)

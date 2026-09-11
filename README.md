@@ -223,9 +223,11 @@ fail, and f2fs's background GC checks for the freeze and skips its pass. A
 batch holds the freeze for about a second, then thaws and rests five seconds
 before the next, and a pass writes at most 1 GiB. Only f2fs is supported while
 mounted, because it keeps its metadata in its own inodes rather than the block
-device's page cache, where a raw write underneath ext4 would collide with the
-superblock and group descriptors ext4 keeps pinned there. A disk with nothing
-mounted is opened `O_EXCL` instead and needs no freeze.
+device's page cache. ext4 keeps its superblock buffer pinned there, a direct
+write that cannot invalidate that page records a writeback error on the device
+(`dio_warn_stale_pagecache`), and jbd2 aborts the journal when it next sees
+that error, which puts the filesystem read-only. A disk with nothing mounted
+is opened `O_EXCL` instead and needs no freeze.
 
 A freeze outlives the process that made it, and a daemon killed between the
 freeze and the thaw would leave every writer on the machine waiting. So a
