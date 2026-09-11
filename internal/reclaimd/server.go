@@ -127,6 +127,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/disks/{key}/enabled", s.handleEnabled)
 	mux.HandleFunc("POST /api/v1/disks/{key}/scan", s.handleScan)
 	mux.HandleFunc("POST /api/v1/disks/{key}/stop", s.handleStop)
+	mux.HandleFunc("GET /api/v1/disks/{key}/speed", s.handleSpeed)
+	mux.HandleFunc("POST /api/v1/disks/{key}/speed", s.handleSpeedTest)
 	mux.HandleFunc("GET /api/v1/stream", s.handleStream)
 
 	sub, err := fs.Sub(webFS, "web")
@@ -272,6 +274,7 @@ func (s *Server) views(detail bool) []DiskView {
 		v.LastOutcome = st.Schedule.LastOutcome
 		v.ScanRequested = st.ScanRequested
 		v.Stopping = st.StopRequested
+		v.SpeedTesting = st.Testing
 		v.BytesWritten = st.Meta.BytesWritten
 		if st.Live != nil {
 			live := *st.Live
@@ -305,6 +308,9 @@ func (s *Server) views(detail bool) []DiskView {
 		if detail {
 			v.Controllers = controllersFor(sched, rounds, s.cfg, v.Identity, v.Live)
 			v.Rounds = rounds
+			v.SpeedRegionsN = s.cfg.SpeedRegions
+			v.SpeedRegionMiB = s.cfg.SpeedRegionMiB
+			v.SpeedBudgetS = s.cfg.SpeedBudget.Duration().Seconds()
 		}
 		out = append(out, v)
 	}
@@ -465,6 +471,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrScanInProgress):
 		writeError(w, http.StatusConflict, CodeScanInProgress,
 			"a round is already running on this disk")
+	case errors.Is(err, ErrSpeedTestRunning):
+		writeError(w, http.StatusConflict, CodeSpeedTestRunning,
+			"a speed test is running on this disk")
 	case errors.Is(err, ErrScanSuppressed):
 		// This refusal is deliberate. The suppression window exists because the
 		// disk just took a filesystem down with it, and impatience is no reason
@@ -513,12 +522,70 @@ func (s *Server) handleForget(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrScanInProgress):
 		writeError(w, http.StatusConflict, CodeScanInProgress,
 			"a round is running on this disk")
+	case errors.Is(err, ErrSpeedTestRunning):
+		writeError(w, http.StatusConflict, CodeSpeedTestRunning,
+			"a speed test is running on this disk")
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
+// handleSpeed serves the disk's latest speed test.
+func (s *Server) handleSpeed(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
+	res, err := s.store.LoadSpeed(key)
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no speed test yet")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleSpeedTest starts a speed test. It answers once the test is under
+// way, and the page hears SPEED_END when the result is there to fetch.
+func (s *Server) handleSpeedTest(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		IMeanIt bool `json:"i_mean_it"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil &&
+		!errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	err := s.sup.RequestSpeedTest(key, body.IMeanIt)
+	switch {
+	case errors.Is(err, ErrScanInProgress):
+		writeError(w, http.StatusConflict, CodeScanInProgress,
+			"a round is running on this disk")
+	case errors.Is(err, ErrSpeedTestRunning):
+		writeError(w, http.StatusConflict, CodeSpeedTestRunning,
+			"a speed test is already running on this disk")
+	case errors.Is(err, ErrScanSuppressed):
+		writeError(w, http.StatusConflict, CodeScanSuppressed,
+			"disk is in the cooldown window the last round opened")
+	case errors.Is(err, ErrNotPresent):
+		writeError(w, http.StatusConflict, CodeDeviceNotReady, "disk is not plugged in")
+	case errors.Is(err, ErrNotFound):
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+	default:
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 	}
 }
 

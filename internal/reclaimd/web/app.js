@@ -22,6 +22,8 @@ const state = {
      When only the page remembered the request, a reload in between offered
      the button again. */
   scanSending: new Set(),
+  speed: null, // the selected disk's latest speed test
+  speedSending: false, // a speed test request still on the wire
   system: null, // GET /system: the build and the machine
 };
 
@@ -190,14 +192,16 @@ function reselect() {
 async function refreshDetail(soft) {
   if (!state.selected) { renderAll(); return; }
   try {
-    const [detail, rounds, events] = await Promise.all([
+    const [detail, rounds, events, speed] = await Promise.all([
       api.getDisk(state.selected),
       api.getRounds(state.selected, 60),
       api.getEvents(state.selected, 120),
+      api.getSpeed(state.selected).catch(() => null), // 404 before the first test
     ]);
     state.detail = detail;
     state.rounds = rounds;
     state.events = events;
+    state.speed = speed;
     if (!soft || !state.profile) await loadProfiles();
   } catch (e) { setConn('down'); }
   renderAll();
@@ -236,6 +240,7 @@ function renderAll() {
   renderMap();
   renderStack();
   renderFreshness();
+  renderSpeed();
   renderRewrite();
   renderStructure();
   renderTrends();
@@ -537,6 +542,106 @@ function renderFreshness() {
   if (p) $('fresh-axis').innerHTML = diskAxisHTML(p);
 }
 
+/* The speed test: a button, and the latest result as speed by position.
+
+   The test is the one read path with no duty cycle and no ceiling, so the
+   page does not offer it while a round is running or the disk is cooling
+   down, and the daemon refuses it then anyway. The cooldown can be overridden
+   the same way as for a scan, through the same dialog. */
+function renderSpeed() {
+  const d = state.detail;
+  const sec = $('speed');
+  if (!d) { sec.hidden = true; return; }
+  sec.hidden = false;
+  $('speed-lede').textContent = I.t('speed.lede', {
+    n: d.speed_regions_n || 8,
+    mib: I.fmtMiB(d.speed_region_mib || 64),
+    budget: I.fmtDur(d.speed_budget_s || 20),
+  });
+
+  const btn = $('speed-btn');
+  const testing = d.speed_testing || state.speedSending;
+  btn.textContent = I.t(testing ? 'speed.running' : 'speed.run');
+  btn.disabled = testing || !d.present || d.scanning;
+  btn.title = !d.present ? I.t('disk.absent') : d.scanning ? I.t('disk.scanRunning') : '';
+  btn.onclick = () => sendSpeed(d);
+
+  const res = state.speed;
+  const size = d.identity?.size_bytes || 0;
+  if (!res || !res.regions?.length) {
+    $('speed-when').textContent = '';
+    $('speed-headline').textContent = I.t('speed.none');
+    $('speed-svg').innerHTML = '';
+    $('speed-axis').innerHTML = '';
+    $('speed-regions').innerHTML = '';
+    return;
+  }
+  const mib = (b) => I.fmtMiB(b / (1 << 20));
+  $('speed-when').textContent = I.t('speed.when', {
+    when: I.fmtStamp(new Date(res.at).getTime() / 1000),
+    read: mib(res.bytes), dur: I.fmtDur(res.elapsed_s),
+    p50: I.fmtLatency(res.p50_ms), max: I.fmtLatency(res.max_ms),
+  });
+  let head = I.t('speed.headline', {
+    avg: I.fmtSpeed(res.mibs),
+    min: I.fmtSpeed(res.min_mibs), minAt: mib(res.slowest_offset),
+    max: I.fmtSpeed(res.max_mibs), maxAt: mib(res.fastest_offset),
+  });
+  if (res.outcome !== 'complete') head += ` <span class="est">${esc(I.t('speed.outcome.' + res.outcome))}</span>`;
+  $('speed-headline').innerHTML = head;
+
+  C.svgSpeedBars($('speed-svg'), res, size);
+  $('speed-axis').innerHTML = size ? diskAxisHTML({ count: size / (1 << 20), blockSize: 1 << 20 }) : '';
+
+  const list = $('speed-regions');
+  list.innerHTML = '';
+  for (const r of res.regions) {
+    const li = document.createElement('li');
+    let note = '';
+    if (r.stopped_by) note = I.t('speed.stop.' + r.stopped_by, { mib: mib(r.bytes) });
+    if (r.errors_n > 0) note += (note ? ' · ' : '') + I.t('speed.unreadable', { n: r.errors_n });
+    li.innerHTML = `<span>${esc(mib(r.offset))}</span>
+      <span class="mono">${esc(r.blocks_n > 0
+        ? I.t('speed.region', { speed: I.fmtSpeed(r.mibs), p50: I.fmtLatency(r.p50_ms), max: I.fmtLatency(r.max_ms) })
+        : I.t('none'))}${note ? ' <span class="n">' + esc(note) + '</span>' : ''}</span>`;
+    list.appendChild(li);
+  }
+}
+
+async function sendSpeed(d) {
+  const key = d.key;
+  const run = async (iMeanIt) => {
+    state.speedSending = true;
+    renderSpeed();
+    try {
+      await api.runSpeedTest(key, iMeanIt);
+      toast(I.t('toast.speedStarted', { budget: I.fmtDur(d.speed_budget_s || 20) }));
+      await refreshAll();
+    } finally {
+      state.speedSending = false;
+      renderSpeed();
+    }
+  };
+  try {
+    await run(false);
+  } catch (err) {
+    if (err.code === 'SCAN_IN_PROGRESS') { toast(I.t('disk.scanRunning')); return; }
+    if (err.code === 'SPEED_TEST_IN_PROGRESS') { toast(I.t('toast.speedRunning')); return; }
+    if (err.code === 'DEVICE_NOT_READY') { toast(I.t('disk.absent')); return; }
+    if (err.code !== 'SCAN_SUPPRESSED') { toast(err.message); return; }
+    const left = d.suppress_until_ts
+      ? I.fmtDur(d.suppress_until_ts - Math.floor(Date.now() / 1000)) : '';
+    const why = I.t(d.last_outcome === 'dropout'
+      ? 'reason.SUPPRESSED_AFTER_DROPOUT' : 'reason.SUPPRESSED_AFTER_NEAR_HANG');
+    if (!confirm(I.t('confirm.overrideSpeed', { left, why }))) return;
+    try {
+      await run(true);
+    } catch (e2) {
+      toast(e2.message);
+    }
+  }
+}
+
 /* The two refresh commands for this disk, ready to copy.
 
    This page cannot run a rewrite and does not try to: there is no refresh
@@ -684,6 +789,12 @@ function renderEvents() {
       parts.length = 0;
       parts.push(`code=${raw.code || ''}`, `candidates=${I.fmtNum(raw.candidates_n || 0)}`);
       if (raw.error) parts.push(raw.error);
+    } else if (e.type === 'SPEED_TEST') {
+      parts.length = 0;
+      parts.push(`avg=${I.fmtSpeed(raw.avg_mibs)}`,
+        `min=${I.fmtSpeed(raw.min_mibs)} @ ${I.fmtMiB(raw.slowest_mib)}`,
+        `max=${I.fmtSpeed(raw.max_mibs)}`);
+      if (raw.outcome && raw.outcome !== 'complete') parts.push(raw.outcome);
     }
     const extra = parts.join(' · ');
     li.innerHTML = `<time datetime="${new Date(e.ts).toISOString()}">${

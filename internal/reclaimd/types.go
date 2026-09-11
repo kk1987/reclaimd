@@ -125,6 +125,8 @@ const (
 	// not, with the reason in its code param.
 	EventRewrite        = "REWRITE"
 	EventRewriteSkipped = "REWRITE_SKIPPED"
+	// EventSpeedTest is the summary of one speed test. See SpeedResult.
+	EventSpeedTest = "SPEED_TEST"
 )
 
 // Event is one line of events.jsonl. Params carries the structured values the

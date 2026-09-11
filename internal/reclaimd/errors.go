@@ -25,6 +25,7 @@ const (
 	CodeScanSuppressed     = "SCAN_SUPPRESSED"
 	CodeScanInProgress     = "SCAN_IN_PROGRESS"
 	CodeNotScanning        = "NOT_SCANNING"
+	CodeSpeedTestRunning   = "SPEED_TEST_IN_PROGRESS"
 	CodeExternalIOBusy     = "EXTERNAL_IO_BUSY"
 	CodeStateCorrupt       = "STATE_CORRUPT"
 	CodeStateUnsupported   = "STATE_SCHEMA_UNSUPPORTED"
@@ -74,6 +75,13 @@ var (
 	ErrNotScanning    = errors.New("no scan running")
 	ErrDeviceMounted  = errors.New("device is mounted")
 	ErrNotFound       = errors.New("disk not found")
+
+	// ErrSpeedTestRunning means the disk is busy with a speed test, which
+	// excludes a round for the same reason a round excludes it: two readers
+	// on one stick measure each other.
+	ErrSpeedTestRunning = errors.New("speed test already running")
+	// ErrNotPresent is a request for a disk that is known but not plugged in.
+	ErrNotPresent = errors.New("disk is not present")
 )
 
 // ErrStateCorrupt and ErrStateUnsupported separate "this file is damaged" from

@@ -34,6 +34,11 @@
   "scan_interval_max": "720h",
   "_scan_interval": "Starting point and clamps for the multiplicative policy: clean x1.5, slow x0.7, dropout x0.5. The floor stops a sick disk being scanned into the ground. The ceiling stops a healthy one aging past the retention window this tool exists to defend.",
 
+  "speed_regions_n": 8,
+  "speed_region_mib": 64,
+  "speed_budget": "20s",
+  "_speed": "The speed test reads speed_regions_n stretches of speed_region_mib each, spread evenly from the start of the disk to its end, sequentially and flat out: no duty cycle, no throughput ceiling. speed_budget bounds the whole test and is split equally between the stretches, so a drive whose data has aged to a crawl answers in the same time as a fresh one. It cannot exceed one minute. A stretch also ends on the first block that takes as long as a controller hang.",
+
   "rewrite": {
     "enabled": false,
     "disks": [],

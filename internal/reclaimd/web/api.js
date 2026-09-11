@@ -68,6 +68,17 @@ export async function stopScan(key) {
   return post(`/disks/${encodeURIComponent(key)}/stop`, {});
 }
 
+/* The disk's latest speed test, or a 404 before the first one. */
+export async function getSpeed(key) {
+  return (await get(`/disks/${encodeURIComponent(key)}/speed`)).json();
+}
+
+/* Starts a speed test. The answer says it is under way; SPEED_END says the
+   result is there to fetch. iMeanIt clears a cooldown, as for a scan. */
+export async function runSpeedTest(key, iMeanIt = false) {
+  return post(`/disks/${encodeURIComponent(key)}/speed`, { i_mean_it: iMeanIt });
+}
+
 /* Deletes everything the daemon has stored for one disk. The confirmation is
    the UI's job, so by the time this is called the decision has been made. */
 export async function forgetDisk(key) {

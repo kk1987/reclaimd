@@ -625,6 +625,26 @@ func (s *Store) LoadFreshness(key string) ([]uint32, error) {
 	return out, nil
 }
 
+// SaveSpeed keeps the latest speed test. Only the latest: the event log has
+// the summary of every earlier one, and the page shows the stretches of the
+// last.
+func (s *Store) SaveSpeed(key string, r SpeedResult) error {
+	if _, err := s.ensureDisk(key); err != nil {
+		return err
+	}
+	r.Schema = stateSchema
+	return s.writeJSONAccounted(key, filepath.Join(s.diskDir(key), "speed.json"), r)
+}
+
+func (s *Store) LoadSpeed(key string) (SpeedResult, error) {
+	var r SpeedResult
+	p := filepath.Join(s.diskDir(key), "speed.json")
+	if err := readJSON(p, &r); err != nil {
+		return r, err
+	}
+	return r, checkSchema(p, r.Schema)
+}
+
 // FreezeMarker says which filesystems the daemon is about to freeze, or was
 // freezing when it last died.
 //

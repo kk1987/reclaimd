@@ -208,6 +208,9 @@ canvas.strip{width:100%;height:var(--strip-h);display:block;background:var(--sun
 .stacklabels,.stackstats{display:flex;flex-direction:column;font-size:11px;color:var(--ink-3)}
 .stackgrid canvas{width:100%;display:block}
 #trend-svg{width:100%;height:auto;overflow:visible}
+#speed-svg{width:100%;height:auto;overflow:visible}
+.speedrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.speedrow .copybtn{align-self:auto}
 
 .log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;
   max-height:340px;overflow-y:auto}

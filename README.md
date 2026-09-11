@@ -149,10 +149,40 @@ reclaimd version
 |---|---|---|
 | `daemon` | discovery, adoption, scheduling, scanning, status page | read-only, unless `rewrite.enabled` |
 | `scan` | one pass over one disk; outcome in the exit code | read-only |
+| `speed` | read a few stretches of one disk flat out and report the speed | read-only |
 | `list` | enumerate USB disks and show computed keys | none |
 | `export` | dump all stored state as JSON | none |
 | `refresh` | rewrite a disk in place, behind four gates | **read-write** |
 | `version` | build metadata | none |
+
+### Read speed
+
+Everything else the daemon reads is deliberately slow: rate-limited, rested,
+backed off at the first slow block. That is right for maintenance and no use
+for answering "how fast does this drive read right now", which on these sticks
+is a question about the age of the data: a fresh write reads at the rated
+speed, an old one at a fraction of it. So there is one read path with no duty
+cycle and no ceiling, and it is short. It takes eight stretches of 64 MiB
+spread from the start of the disk to its end, reads each one sequentially as
+fast as the drive will go, and reports the speed of each stretch and overall,
+with the p50 and worst latency alongside. The whole test has a budget of 20
+seconds (`speed_budget`, at most a minute), each stretch gets an equal share
+of it, and a stretch also ends on the first block that takes as long as a
+controller hang, because the read after a near-hang is the one that drops the
+bus.
+
+The status page has a button for it and shows the result as speed by
+position, with the slowest stretch picked out. The daemon refuses to run it
+while the disk is scanning or cooling down, with the same override as a scan,
+and a round does not start while a test runs. The result is stored as the
+disk's latest and summarised in a `SPEED_TEST` event. From a shell:
+
+```sh
+reclaimd speed -disk=<key>          # a table; -json for the whole result
+```
+
+That runs the same test without the store, so it works next to a running
+daemon, records nothing, and does not see the daemon's cooldown.
 
 ### Rewriting a drive
 

@@ -39,6 +39,7 @@ usage: reclaimd <command> [flags]
 commands:
   daemon    discover, adopt, schedule, scan, and serve the status page
   scan      one pass over one disk now; the outcome is the exit code
+  speed     read a few stretches of one disk flat out and report the speed
   list      every USB disk visible, and the key each is filed under
   export    dump all stored state as JSON
   refresh   rewrite a disk in place, behind four gates
@@ -98,6 +99,18 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(runScan(cfg, logger, *disk, *force))
+
+	case "speed":
+		fs, common := newCommand(cmd)
+		disk := fs.String("disk", "", "disk key or /dev node (required)")
+		asJSON := fs.Bool("json", false, "print the result as JSON instead of a table")
+		_ = fs.Parse(args)
+		cfg, logger := common.load()
+		if *disk == "" {
+			logger.Error("-disk is required for speed")
+			os.Exit(1)
+		}
+		os.Exit(runSpeed(cfg, logger, *disk, *asJSON))
 
 	case "export":
 		fs, common := newCommand(cmd)
@@ -227,6 +240,97 @@ func runScan(cfg reclaimd.Config, logger *slog.Logger, disk string, force bool) 
 	default:
 		return 0
 	}
+}
+
+// runSpeed runs one speed test and prints it. It does not open the store, so
+// it works while the daemon holds the lock, and for the same reason it records
+// nothing and does not see the daemon's cooldown: the status page's button is
+// the one that does both.
+func runSpeed(cfg reclaimd.Config, logger *slog.Logger, disk string, asJSON bool) int {
+	pl := reclaimd.DefaultPlatform()
+	disks, err := pl.Discover()
+	if err != nil {
+		logger.Error("discovery failed", "error", err)
+		return 1
+	}
+	var p reclaimd.Presence
+	found := false
+	for _, d := range disks {
+		if d.Identity.Key == disk || d.Node == disk || d.KernelName == disk {
+			p, found = d, true
+			break
+		}
+	}
+	if !found {
+		logger.Error("disk not found", "disk", disk)
+		return 1
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	dev, err := reclaimd.OpenDevice(p, cfg.BlockSizeFor(p.Identity), pl)
+	if err != nil {
+		logger.Error("open device", "error", err)
+		return 1
+	}
+	defer dev.Close()
+	if _, err := dev.WarmUp(ctx, cfg.WarmupDiscard); err != nil {
+		logger.Error("warm up", "error", err)
+		return 1
+	}
+	res, err := reclaimd.SpeedTest(ctx, dev, cfg)
+	if err != nil && !errors.Is(err, reclaimd.ErrDeviceDisconnected) {
+		logger.Error("speed test failed", "error", err)
+		if res.Blocks == 0 {
+			return 1
+		}
+	}
+
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(res)
+	} else {
+		printSpeed(p, res)
+	}
+	if res.Outcome == reclaimd.SpeedDropout {
+		return 3
+	}
+	return 0
+}
+
+func printSpeed(p reclaimd.Presence, res reclaimd.SpeedResult) {
+	fmt.Printf("%s %s (%s), %d stretches of %d MiB, %d KiB reads\n",
+		p.Identity.Vendor, p.Identity.Model, p.Node, len(res.Regions), res.RegionMiB,
+		res.BlockSize/1024)
+	fmt.Printf("%12s %9s %8s %8s %5s  %s\n", "offset", "MiB/s", "p50 ms", "max ms", "slow", "note")
+	for _, r := range res.Regions {
+		note := ""
+		switch r.StoppedBy {
+		case reclaimd.SpeedStopBudget:
+			note = fmt.Sprintf("out of time after %d MiB", r.Bytes>>20)
+		case reclaimd.SpeedStopNearHang:
+			note = fmt.Sprintf("near-hang after %d MiB", r.Bytes>>20)
+		case reclaimd.SpeedStopError:
+			note = "device went away"
+		}
+		if r.Errors > 0 {
+			note += fmt.Sprintf(" %d unreadable", r.Errors)
+		}
+		fmt.Printf("%9d MiB %9.1f %8.1f %8.1f %5d  %s\n",
+			r.Offset>>20, r.MiBs, r.P50Ms, r.MaxMs, r.Slow, strings.TrimSpace(note))
+	}
+	fmt.Printf("overall: %d MiB in %.1f s = %.1f MiB/s, p50 %.1f ms, p95 %.1f ms, max %.1f ms",
+		res.Bytes>>20, res.ElapsedS, res.MiBs, res.P50Ms, res.P95Ms, res.MaxMs)
+	if len(res.Regions) > 1 {
+		fmt.Printf("; slowest %.1f MiB/s at %d MiB, fastest %.1f MiB/s at %d MiB",
+			res.MinMiBs, res.SlowestOffset>>20, res.MaxMiBs, res.FastestOffset>>20)
+	}
+	if res.Outcome != reclaimd.SpeedComplete {
+		fmt.Printf(" (%s)", res.Outcome)
+	}
+	fmt.Println()
 }
 
 // runExport dumps everything the daemon knows without touching a device, so it

@@ -1,5 +1,5 @@
 import { bucketOf, codeToMs, LAT_SKIPPED, LAT_ERROR } from './codec.js';
-import { t, fmtLatency, fmtNum } from './i18n.js';
+import { t, fmtLatency, fmtNum, fmtSpeed, fmtMiB } from './i18n.js';
 
 /* Canvas for the strips (61184 points, far more than pixels, no per-element
    text) and SVG for the charts (few elements, needs axis labels, and inherits
@@ -331,6 +331,40 @@ export function svgTrends(el, rounds) {
         width="${bw.toFixed(1)}" height="${Math.max(v > 0 ? 1.5 : 0, h).toFixed(1)}"
         fill="${row.color}" rx="1"><title>#${r.seq}: ${v}</title></rect>`);
     });
+  }
+  el.innerHTML = parts.join('');
+}
+
+/* One bar per sampled stretch, placed where the stretch sits on the disk, so
+   the chart reads as "speed by position". The stretches are tiny against the
+   disk (64 MiB on 60 GiB), so the bars get a fixed width and only their
+   centres follow the offsets. The slowest is picked out, and a stretch that
+   ended on a near-hang is drawn in the danger colour, because that is the
+   finding worth seeing. */
+export function svgSpeedBars(el, res, sizeBytes) {
+  const regions = (res?.regions || []).filter((r) => r.blocks_n > 0);
+  if (!regions.length || !sizeBytes) { el.innerHTML = ''; return; }
+  const W = 720, H = 150, L = 46, R = 12, T = 22, B = 10;
+  const rowH = H - T - B;
+  const bw = Math.max(10, Math.min(28, (W - L - R) / regions.length / 2));
+  const max = Math.max(...regions.map((r) => r.mibs), 0.001);
+  const x = (off) => L + bw / 2 + ((off + (res.regions[0]?.bytes || 0) / 2) / sizeBytes) * (W - L - R - bw);
+  const parts = [];
+  parts.push(`<line x1="${L}" y1="${T + rowH}" x2="${W - R}" y2="${T + rowH}" stroke="var(--line)" stroke-width="1"/>`);
+  parts.push(`<text x="${L - 8}" y="${T + 6}" text-anchor="end" font-size="10"
+    font-family="var(--mono)" fill="var(--ink-3)">${fmtSpeed(max)}</text>`);
+  parts.push(`<text x="${L - 8}" y="${T + rowH}" text-anchor="end" font-size="10"
+    font-family="var(--mono)" fill="var(--ink-3)">0</text>`);
+  for (const r of regions) {
+    const h = (r.mibs / max) * rowH;
+    const cx = x(r.offset);
+    const color = r.stopped_by === 'near_hang' ? 'var(--bad)'
+      : r.offset === res.slowest_offset && regions.length > 1 ? 'var(--warn)' : 'var(--accent)';
+    parts.push(`<rect x="${(cx - bw / 2).toFixed(1)}" y="${(T + rowH - h).toFixed(1)}"
+      width="${bw.toFixed(1)}" height="${Math.max(1.5, h).toFixed(1)}" fill="${color}" rx="1">
+      <title>${fmtMiB(r.offset / (1 << 20))}: ${fmtSpeed(r.mibs)}</title></rect>`);
+    parts.push(`<text x="${cx.toFixed(1)}" y="${(T + rowH - h - 4).toFixed(1)}" text-anchor="middle"
+      font-size="10" font-family="var(--mono)" fill="var(--ink-2)">${fmtSpeed(r.mibs)}</text>`);
   }
   el.innerHTML = parts.join('');
 }

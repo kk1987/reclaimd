@@ -34,6 +34,10 @@ type diskState struct {
 	Live     *LiveProgress
 	LastErr  string
 
+	// Testing is a speed test in flight. It holds the disk the way Scanning
+	// does, since two readers on one stick would only measure each other.
+	Testing bool
+
 	// stop cancels the running round, and is set for exactly as long as
 	// Scanning is. StopRequested says it has been called: the round ends at its
 	// next segment boundary or rest, and until then the page shows it winding
@@ -75,6 +79,11 @@ type Supervisor struct {
 	OnChange func(key, change string)
 
 	heartbeat atomic64
+
+	// ctx is the daemon's, kept so that work started from an HTTP request,
+	// which has no context of its own past the response, still ends with the
+	// daemon.
+	ctx context.Context
 }
 
 func NewSupervisor(cfg Config, store *Store, logger *slog.Logger, pl Platform) *Supervisor {
@@ -86,11 +95,15 @@ func NewSupervisor(cfg Config, store *Store, logger *slog.Logger, pl Platform) *
 		scanner:  NewScanner(cfg, store, logger, pl),
 		disks:    map[string]*diskState{},
 		wake:     make(chan struct{}, 1),
+		ctx:      context.Background(),
 	}
 }
 
 // Run drives discovery and scheduling until the context is cancelled.
 func (s *Supervisor) Run(ctx context.Context) error {
+	s.mu.Lock()
+	s.ctx = ctx
+	s.mu.Unlock()
 	s.thawLeftovers()
 	s.loadKnownDisks()
 
@@ -249,7 +262,7 @@ func (s *Supervisor) tick(ctx context.Context) {
 // considerDisk decides whether this disk should be scanned right now.
 func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.Time) {
 	s.mu.Lock()
-	if st.Scanning || !st.Present {
+	if st.Scanning || st.Testing || !st.Present {
 		s.mu.Unlock()
 		return
 	}
@@ -663,6 +676,10 @@ func (s *Supervisor) Forget(key string) error {
 		s.mu.Unlock()
 		return ErrScanInProgress
 	}
+	if st.Testing {
+		s.mu.Unlock()
+		return ErrSpeedTestRunning
+	}
 	// Deleting under the same lock that guards the map is what keeps a
 	// discovery tick from slipping in between and re-creating what is on its
 	// way out.
@@ -698,29 +715,11 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 		// round ends, so the request was discarded either way.
 		return ErrScanInProgress
 	}
-	if left := time.Until(st.Schedule.SuppressUntil); left > 0 {
-		// force is the same escape hatch `scan -i-mean-it` has always had, now
-		// reachable from the UI as well as over ssh. It clears the cooldown and
-		// nothing else, and it says so where it can be read back: overriding a
-		// window that exists because the disk misbehaved is a decision worth
-		// finding again later, next to whatever happened next.
-		if !force {
-			return ErrScanSuppressed
-		}
-		s.logger.Warn("cooldown overridden by request",
-			"disk", key, "outcome", st.Schedule.LastOutcome,
-			"remaining_h", left.Hours())
-		_ = s.store.AppendEvent(key, Event{
-			Type: EventOverride,
-			Params: map[string]any{
-				"outcome":     st.Schedule.LastOutcome,
-				"remaining_h": round2(left.Hours()),
-			},
-		})
-		st.Schedule.SuppressUntil = time.Time{}
-		if err := s.store.SaveSchedule(key, st.Schedule); err != nil {
-			s.logger.Error("save schedule after override", "disk", key, "error", err)
-		}
+	if st.Testing {
+		return ErrSpeedTestRunning
+	}
+	if err := s.overrideCooldownLocked(st, force); err != nil {
+		return err
 	}
 	st.Schedule.NextScanAt = time.Now()
 	st.ScanRequested = true
@@ -729,6 +728,178 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 	default: // a tick is already queued, and it will see this request
 	}
 	return nil
+}
+
+// overrideCooldownLocked applies the cooldown to a request to read the disk.
+// force is the same escape hatch `scan -i-mean-it` has always had, reachable
+// from the UI as well as over ssh. It clears the cooldown and nothing else,
+// and it says so where it can be read back: overriding a window that exists
+// because the disk misbehaved is a decision worth finding again later, next
+// to whatever happened next.
+func (s *Supervisor) overrideCooldownLocked(st *diskState, force bool) error {
+	left := time.Until(st.Schedule.SuppressUntil)
+	if left <= 0 {
+		return nil
+	}
+	if !force {
+		return ErrScanSuppressed
+	}
+	s.logger.Warn("cooldown overridden by request",
+		"disk", st.Key, "outcome", st.Schedule.LastOutcome,
+		"remaining_h", left.Hours())
+	_ = s.store.AppendEvent(st.Key, Event{
+		Type: EventOverride,
+		Params: map[string]any{
+			"outcome":     st.Schedule.LastOutcome,
+			"remaining_h": round2(left.Hours()),
+		},
+	})
+	st.Schedule.SuppressUntil = time.Time{}
+	if err := s.store.SaveSchedule(st.Key, st.Schedule); err != nil {
+		s.logger.Error("save schedule after override", "disk", st.Key, "error", err)
+	}
+	return nil
+}
+
+// RequestSpeedTest starts a speed test on a disk and returns as soon as it
+// is under way. The result arrives as a SPEED_TEST event and as the disk's
+// stored latest, and the page hears SPEED_START and SPEED_END in between. The
+// same rules as a round apply: not while the disk is busy, and not inside a
+// cooldown unless forced, since a burst of full-speed reads is the last thing
+// a disk that just dropped off the bus needs.
+func (s *Supervisor) RequestSpeedTest(key string, force bool) error {
+	s.mu.Lock()
+	st, ok := s.disks[key]
+	if !ok {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	switch {
+	case !st.Present:
+		s.mu.Unlock()
+		return ErrNotPresent
+	case st.Scanning:
+		s.mu.Unlock()
+		return ErrScanInProgress
+	case st.Testing:
+		s.mu.Unlock()
+		return ErrSpeedTestRunning
+	}
+	if err := s.overrideCooldownLocked(st, force); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	st.Testing = true
+	p := st.Presence
+	ctx := s.ctx
+	s.mu.Unlock()
+
+	go s.runSpeedTest(ctx, st, p)
+	return nil
+}
+
+func (s *Supervisor) runSpeedTest(ctx context.Context, st *diskState, p Presence) {
+	key := st.Key
+	defer func() {
+		s.mu.Lock()
+		st.Testing = false
+		s.mu.Unlock()
+		s.notifyChange(key, "SPEED_END")
+	}()
+	s.notifyChange(key, "SPEED_START")
+
+	dev, err := OpenDevice(p, s.cfg.BlockSizeFor(p.Identity), s.platform)
+	if err != nil {
+		s.logger.Error("open device for speed test", "disk", key, "error", err)
+		s.setErr(st, err)
+		return
+	}
+	defer dev.Close()
+	if _, err := dev.WarmUp(ctx, s.cfg.WarmupDiscard); err != nil {
+		s.logger.Error("warm up for speed test", "disk", key, "error", err)
+		s.setErr(st, err)
+		return
+	}
+
+	// The config's budget is checked in SpeedTest. This is the ceiling
+	// behind it, in case a single read hangs for the controller's watchdog.
+	ctx, cancel := context.WithTimeout(ctx, maxSpeedBudget)
+	defer cancel()
+	res, err := SpeedTest(ctx, dev, s.cfg)
+	if errors.Is(err, ErrDeviceDisconnected) {
+		// The same event as a dropout during a round, with the same 24-hour
+		// window behind it, because it is the same thing: the disk carrying
+		// a live filesystem just left the bus under a read.
+		s.recordSpeedDropout(st, res)
+	} else if err != nil && !errors.Is(err, context.Canceled) {
+		s.logger.Error("speed test failed", "disk", key, "error", err)
+		s.setErr(st, err)
+	}
+	if res.Blocks == 0 {
+		return
+	}
+	if err := s.store.SaveSpeed(key, res); err != nil {
+		s.logger.Error("save speed test", "disk", key, "error", err)
+	}
+	_ = s.store.AppendEvent(key, Event{Type: EventSpeedTest, Params: speedEventParams(res)})
+	s.logger.Info("speed test finished", "disk", key, "outcome", res.Outcome,
+		"mibs", res.MiBs, "min_mibs", res.MinMiBs, "max_mibs", res.MaxMiBs,
+		"read_mib", res.Bytes>>20, "elapsed_s", round2(res.ElapsedS),
+		"p50_ms", res.P50Ms, "max_ms", res.MaxMs, "regions_n", len(res.Regions))
+}
+
+func (s *Supervisor) recordSpeedDropout(st *diskState, res SpeedResult) {
+	key := st.Key
+	var off int64
+	if n := len(res.Regions); n > 0 {
+		r := res.Regions[n-1]
+		off = r.Offset + r.Bytes
+	}
+	prog := Progress{
+		RoundSeq:      st.Schedule.RoundSeq,
+		Cursor:        st.Schedule.Cursor,
+		SuppressUntil: time.Now().Add(s.cfg.SuppressAfterDropout.Duration()),
+		LastOutcome:   OutcomeDropout,
+	}
+	if err := s.store.SaveProgress(key, prog); err != nil {
+		s.logger.Error("persist dropout suppression", "error", err, "disk", key)
+	}
+	s.mu.Lock()
+	st.Schedule.SuppressUntil = prog.SuppressUntil
+	st.Schedule.LastOutcome = OutcomeDropout
+	sched := st.Schedule
+	s.mu.Unlock()
+	if err := s.store.SaveSchedule(key, sched); err != nil {
+		s.logger.Error("save schedule after dropout", "disk", key, "error", err)
+	}
+	s.logger.Warn("device dropped off the bus during a speed test",
+		"disk", key, "offset", off, "code", CodeDeviceDisconnected)
+	_ = s.store.AppendEvent(key, Event{
+		Type: EventDropout, Offset: off,
+		Params: map[string]any{
+			"offset_mib": off >> 20,
+			"suppress_h": s.cfg.SuppressAfterDropout.Duration().Hours(),
+			"source":     "speed_test",
+		},
+	})
+}
+
+// speedEventParams is the summary that goes into the event log.
+func speedEventParams(res SpeedResult) map[string]any {
+	return map[string]any{
+		"outcome":     res.Outcome,
+		"avg_mibs":    res.MiBs,
+		"min_mibs":    res.MinMiBs,
+		"max_mibs":    res.MaxMiBs,
+		"slowest_mib": res.SlowestOffset >> 20,
+		"fastest_mib": res.FastestOffset >> 20,
+		"read_mib":    res.Bytes >> 20,
+		"elapsed_s":   round2(res.ElapsedS),
+		"p50_ms":      res.P50Ms,
+		"max_ms":      res.MaxMs,
+		"slow_n":      res.Slow,
+		"regions_n":   len(res.Regions),
+	}
 }
 
 // StopScan ends the round running on a disk. The round notices at its next

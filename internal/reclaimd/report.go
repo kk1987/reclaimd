@@ -73,6 +73,13 @@ type DiskView struct {
 	// Scanning stays true until it has, and a reload in between has to show the
 	// round winding down instead of offering Stop again.
 	Stopping bool `json:"stopping"`
+	// SpeedTesting is a speed test in flight, for the page to hold the button
+	// down and the scheduler to leave the disk alone. The three plan fields
+	// are what a test would do, so the page can say so before one has run.
+	SpeedTesting   bool    `json:"speed_testing"`
+	SpeedRegionsN  int     `json:"speed_regions_n,omitempty"`
+	SpeedRegionMiB int     `json:"speed_region_mib,omitempty"`
+	SpeedBudgetS   float64 `json:"speed_budget_s,omitempty"`
 	// LastOutcome is what the previous round graded, which says whether a
 	// cooldown in progress is the six-hour kind or the twenty-four-hour kind.
 	// The difference is worth showing before anyone is offered the chance to

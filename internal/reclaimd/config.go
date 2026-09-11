@@ -203,6 +203,18 @@ type Config struct {
 	KeepFullProfiles   int `json:"keep_full_profiles_n"`
 	KeepCoarseProfiles int `json:"keep_coarse_profiles_n"`
 
+	// ---- speed test ----
+
+	// A speed test reads SpeedRegions stretches of SpeedRegionMiB each,
+	// spread from the start of the disk to its end, flat out, with no duty
+	// cycle and no throughput ceiling. SpeedBudget bounds the whole test, and
+	// each stretch gets an equal share of it, so a drive whose data has aged
+	// to a crawl still answers in the same time as a fresh one. The ceiling on
+	// the budget is a minute, whatever is configured. See SpeedTest.
+	SpeedRegions   int      `json:"speed_regions_n"`
+	SpeedRegionMiB int      `json:"speed_region_mib"`
+	SpeedBudget    Duration `json:"speed_budget"`
+
 	// ---- rewrite ----
 
 	// Rewrite is the one part of the daemon that writes to a disk, and it is
@@ -430,6 +442,15 @@ func (c *Config) withDefaults() {
 	if c.KeepCoarseProfiles == 0 {
 		c.KeepCoarseProfiles = 104
 	}
+	if c.SpeedRegions == 0 {
+		c.SpeedRegions = 8
+	}
+	if c.SpeedRegionMiB == 0 {
+		c.SpeedRegionMiB = 64
+	}
+	if c.SpeedBudget == 0 {
+		c.SpeedBudget = Duration(20 * time.Second)
+	}
 	// Rewrite.Enabled keeps its zero. Everything under it has a default so
 	// that turning it on is one line.
 	if c.Rewrite.MinRounds == 0 {
@@ -536,6 +557,12 @@ func (c Config) validate() error {
 	}
 	if c.ScanIntervalMin >= c.ScanIntervalMax {
 		return fmt.Errorf("scan_interval_min must be below scan_interval_max")
+	}
+	if c.SpeedRegions < 1 || c.SpeedRegionMiB < 1 {
+		return fmt.Errorf("speed_regions_n and speed_region_mib must be at least 1")
+	}
+	if b := c.SpeedBudget.Duration(); b <= 0 || b > maxSpeedBudget {
+		return fmt.Errorf("speed_budget must be between 1s and %v, got %v", maxSpeedBudget, b)
 	}
 	if f := c.Rewrite.StillSlowFraction; f <= 0 || f > 1 {
 		return fmt.Errorf("rewrite.still_slow_fraction must be in (0, 1], got %v", f)

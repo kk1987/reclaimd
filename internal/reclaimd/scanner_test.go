@@ -21,6 +21,7 @@ type fakeDisk struct {
 
 	degraded map[int64]time.Duration // block index -> latency while still bad
 	drops    map[int64]bool          // block index -> hangs and drops the bus
+	media    map[int64]bool          // block index -> unreadable, device stays
 	healed   map[int64]bool
 
 	reported int // BlockSize() override; 0 means report blockSize honestly
@@ -44,6 +45,7 @@ func newFakeDisk(blocks int64, blockSize int, base time.Duration) *fakeDisk {
 		base:      base,
 		degraded:  map[int64]time.Duration{},
 		drops:     map[int64]bool{},
+		media:     map[int64]bool{},
 		healed:    map[int64]bool{},
 	}
 }
@@ -73,6 +75,9 @@ func (f *fakeDisk) ReadBlock(off int64) (time.Duration, error) {
 
 	if f.gone {
 		return 0, ErrDeviceDisconnected
+	}
+	if f.media[idx] {
+		return f.base, ErrMediaError
 	}
 	if f.drops[idx] && !f.healed[idx] {
 		// The controller hangs for its watchdog interval and the device is
