@@ -34,3 +34,7 @@ const (
 )
 
 func onTmpfs(string) bool { return false }
+
+// kernelVersion names the kernel as the Go runtime knows it; its release would
+// take a platform file of its own.
+func kernelVersion() (name, release string) { return runtime.GOOS, "" }

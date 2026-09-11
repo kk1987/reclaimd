@@ -27,6 +27,14 @@ func DefaultPlatform() Platform {
 
 const defaultStateDir = "/var/db/reclaimd"
 
+// kernelVersion is the kernel's name and release, from kern.ostype and
+// kern.osrelease.
+func kernelVersion() (name, release string) {
+	name, _ = syscall.Sysctl("kern.ostype")
+	release, _ = syscall.Sysctl("kern.osrelease")
+	return name, release
+}
+
 // scanOpenFlags has nothing to add. FreeBSD has had no block devices since
 // 4.0: /dev/da0 is a character device with no buffer cache in front of it, so
 // every read reaches the driver, and O_DIRECT would change nothing.

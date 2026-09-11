@@ -19,6 +19,11 @@ export async function getDisks() {
   return (await (await get('/disks')).json()).disks || [];
 }
 
+/* The build and the machine this page is talking to. */
+export async function getSystem() {
+  return (await get('/system')).json();
+}
+
 export async function getDisk(key) {
   return (await get('/disks/' + encodeURIComponent(key))).json();
 }

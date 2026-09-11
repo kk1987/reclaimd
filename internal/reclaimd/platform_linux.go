@@ -34,3 +34,8 @@ func onTmpfs(dir string) bool {
 	var st syscall.Statfs_t
 	return syscall.Statfs(dir, &st) == nil && st.Type == tmpfsMagic
 }
+
+// kernelVersion is the kernel's name and release, from where procfs keeps them.
+func kernelVersion() (name, release string) {
+	return firstLine("/proc/sys/kernel/ostype"), firstLine("/proc/sys/kernel/osrelease")
+}

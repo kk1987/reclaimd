@@ -22,6 +22,7 @@ const state = {
      Remembering the request here instead is what let a reload in between offer
      the button again. */
   scanSending: new Set(),
+  system: null, // GET /system: the build and the machine
 };
 
 /* Blocks per superblock. The daemon's own segment size is 32 MiB at 1 MiB
@@ -44,14 +45,44 @@ async function sendScan(key, iMeanIt) {
   }
 }
 
+/* Which build, on which machine: a router's page and a laptop's are otherwise
+   the same page. Asked again on every stream hello, so a tab left open across
+   an upgrade shows the daemon that answers it now. */
+async function loadSystem() {
+  try { state.system = await api.getSystem(); } catch (e) { return; }
+  renderSystem();
+}
+
+function renderSystem() {
+  const s = state.system;
+  if (!s) return;
+  const ver = $('sys-version');
+  ver.textContent = s.version || '';
+  const built = Date.parse(s.build_date);
+  ver.title = I.t('sys.build', {
+    commit: s.commit, date: isNaN(built) ? s.build_date : I.fmtAbs(built / 1000) });
+  // The kernel is left out where the distribution's name already says the same.
+  const kernel = s.kernel !== s.os ? s.kernel : '';
+  const line = $('sys-line');
+  line.textContent = [s.hostname && `${I.t('sys.host')} ${s.hostname}`, s.os, kernel, s.arch]
+    .filter(Boolean).join(' · ');
+  line.hidden = !line.textContent;
+  document.title = s.hostname ? `reclaimd · ${s.hostname}` : 'reclaimd';
+}
+
 /* ---------------------------------------------------------------- boot ---- */
 
 async function boot() {
   I.applyStatic();
   wireChrome();
+  loadSystem();
   await refreshAll();
   connect({
-    onHello: (d) => { if (d.disks) { state.disks = d.disks; renderDiskbar(); } setConn('live'); },
+    onHello: (d) => {
+      if (d.disks) { state.disks = d.disks; renderDiskbar(); }
+      setConn('live');
+      loadSystem();
+    },
     onProgress: onProgress,
     onState: async () => {
       /* Scanning on or off is exactly what these events report, and the disk
@@ -198,6 +229,7 @@ async function loadProfiles() {
 
 function renderAll() {
   I.applyStatic();
+  renderSystem();
   renderDiskbar();
   renderVerdict();
   renderControllers();

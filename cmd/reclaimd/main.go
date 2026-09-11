@@ -290,6 +290,7 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 
 	sup := reclaimd.NewSupervisor(cfg, store, logger, reclaimd.DefaultPlatform())
 	srv := reclaimd.NewServer(cfg, store, sup, logger)
+	srv.Build = reclaimd.BuildInfo{Version: version, Commit: commit, Date: buildDate}
 
 	if cfg.ListenAddr != "" && !isLoopback(cfg.ListenAddr) && cfg.UIToken == "" {
 		// An unauthenticated status page on a LAN interface must be a decision,

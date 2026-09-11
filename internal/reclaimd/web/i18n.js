@@ -5,6 +5,7 @@
 export const DICT = {
   zh: {
     'app.tagline': 'USB 闪存保持力维护',
+    'sys.host': '主机', 'sys.build': '提交 {commit}，构建于 {date}',
     'a11y.skip': '跳到正文',
     'a11y.langGroup': '语言', 'a11y.diskbar': '磁盘列表', 'a11y.unitGroup': '容量单位',
     'units.mib': '二进制：1 MiB = 1024² 字节',
@@ -133,6 +134,7 @@ export const DICT = {
   },
   en: {
     'app.tagline': 'USB flash retention upkeep',
+    'sys.host': 'host', 'sys.build': 'commit {commit}, built {date}',
     'a11y.skip': 'Skip to content',
     'a11y.langGroup': 'Language', 'a11y.diskbar': 'Disks', 'a11y.unitGroup': 'Byte units',
     'units.mib': 'Binary: 1 MiB = 1024² bytes',

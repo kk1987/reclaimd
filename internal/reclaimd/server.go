@@ -32,6 +32,10 @@ type Server struct {
 	hub    *Hub
 	start  time.Time
 
+	// Build is what the binary was built from, for the page to show. The
+	// command fills it in after NewServer.
+	Build BuildInfo
+
 	mu sync.Mutex
 	// pending holds the frames that arrived since the last tick, and only
 	// those. An entry left behind here goes out again on every later tick that
@@ -112,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+	mux.HandleFunc("GET /api/v1/system", s.handleSystem)
 	mux.HandleFunc("GET /api/v1/disks", s.handleDisks)
 	mux.HandleFunc("GET /api/v1/disks/{key}", s.handleDisk)
 	mux.HandleFunc("DELETE /api/v1/disks/{key}", s.handleForget)
