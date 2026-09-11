@@ -236,6 +236,7 @@ function renderAll() {
   renderMap();
   renderStack();
   renderFreshness();
+  renderRewrite();
   renderStructure();
   renderTrends();
   renderEvents();
@@ -534,6 +535,83 @@ function renderFreshness() {
 
   const p = state.profile;
   if (p) $('fresh-axis').innerHTML = diskAxisHTML(p);
+}
+
+/* The two refresh commands for this disk, ready to copy.
+
+   This page cannot run a rewrite and does not try to: the daemon holds every
+   device read-only and its unit gives the kernel `block-sd r` to enforce that.
+   So the useful thing a status page can do is assemble the command that the
+   freshness map above it just argued for, with the key and serial filled in.
+
+   That does weaken gate 1, whose point is making somebody look at the device
+   rather than paste a string. Filling in the serial catches the wrong drive but
+   no longer proves anyone went and looked, and README says so where the gates
+   are listed rather than only here. */
+function renderRewrite() {
+  const d = state.detail;
+  const sec = $('rewrite');
+  const host = $('rewrite-body');
+  if (!d) { sec.hidden = true; return; }
+  sec.hidden = false;
+  host.innerHTML = '';
+
+  if (!d.present) {
+    host.innerHTML = `<p class="empty">${esc(I.t('rewrite.absent'))}</p>`;
+    return;
+  }
+  /* No serial means no -confirm to build, and inventing one would produce a
+     command the gate refuses. Say what to run instead. */
+  const serial = d.identity?.serial || '';
+  if (!serial) {
+    host.innerHTML = `<p class="empty">${esc(I.t('rewrite.noSerial'))}</p>`;
+    return;
+  }
+
+  const base = `reclaimd refresh -disk=${d.key} -confirm=${serial}`;
+  for (const [label, cmd] of [
+    ['rewrite.dryLabel', base + ' -dry-run'],
+    ['rewrite.runLabel', base],
+  ]) {
+    const row = document.createElement('div');
+    row.className = 'cmdrow';
+    row.innerHTML = `
+      <div>
+        <div class="lbl">${esc(I.t(label))}</div>
+        <div class="cmd">${esc(cmd)}</div>
+      </div>
+      <button type="button" class="copybtn">${esc(I.t('rewrite.copy'))}</button>`;
+    row.querySelector('.copybtn').addEventListener('click', () => copyText(cmd));
+    host.appendChild(row);
+  }
+}
+
+/* navigator.clipboard exists only in a secure context, and this page is served
+   over plain HTTP as often as not -- a router's LAN address has no certificate.
+   So the deprecated path is the one that actually runs there, and neither is
+   allowed to be the only one. */
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      toast(I.t('rewrite.copied'));
+      return;
+    }
+  } catch (e) { /* fall through to the old way */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    /* Off-screen rather than hidden: a display:none textarea cannot be
+       selected, and the selection is what execCommand copies. */
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    toast(I.t(ok ? 'rewrite.copied' : 'rewrite.copyFail'));
+  } catch (e) {
+    toast(I.t('rewrite.copyFail'));
+  }
 }
 
 function renderStructure() {

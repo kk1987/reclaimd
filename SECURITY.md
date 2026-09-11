@@ -25,6 +25,14 @@ route, and the two POST routes (`enabled` and `scan`) additionally require a
 same-origin `Sec-Fetch-Site` and a JSON content type. There is no `refresh` over
 HTTP at all.
 
+The page does assemble the `refresh` command line for the disk on screen, serial
+and all, for somebody to copy into a shell. That runs nothing by itself — the
+daemon still holds every device read-only and its unit gives the kernel
+`block-sd r` to enforce it — but it does mean anyone who can read the status
+page can read the serial that gate 1 asks for, so treat read access to the page
+as worth the same care as the drive it describes. That is the one respect in
+which a LAN-exposed page is worse than it was before the panel existed.
+
 Binding off-loopback with no token only logs a warning — it does not refuse to
 start. So a status page readable by the whole LAN is reachable by editing one
 config field, and I would rather hear that argued as a bug than not. Bypassing

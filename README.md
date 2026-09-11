@@ -174,6 +174,15 @@ reclaimd refresh -disk=<key> -confirm=<serial> -dry-run
 reclaimd refresh -disk=<key> -confirm=<serial> -range=9000000000:11000000000
 ```
 
+The status page assembles both of those for the disk being viewed, with the key
+and the serial already filled in, next to the freshness map that is the reason
+to run one. It only ever produces text to copy: there is no `refresh` over HTTP,
+the daemon holds every device read-only, and the systemd unit's
+`DeviceAllow=block-sd r` means the kernel would refuse it a write even if it
+asked. Gate 1 is weaker when the serial is copied off the page rather than read
+off the device, and that is the trade the page makes — it catches the wrong
+drive, not the wrong idea.
+
 ### OpenWrt
 
 Copy the binary and the init script over. Busybox has no `install`, and stock
