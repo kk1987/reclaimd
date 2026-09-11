@@ -291,3 +291,53 @@ func TestRequestScanSkipsTheWaitsForUnaskedScans(t *testing.T) {
 		t.Error("a scan nobody asked for started a minute after boot")
 	}
 }
+
+// Scan now used to take effect on the next discovery tick, so the round began
+// anywhere up to 30 seconds after the press, and the page spent that time on a
+// disk that was neither scanning nor, as far as it could tell, asked to scan.
+// The request wakes the loop instead, so this gives it far less than a tick.
+func TestRequestScanStartsTheRoundWithoutWaitingForATick(t *testing.T) {
+	f := newFakeTree(t)
+	f.addUSBNode("usb4/4-2", "090c", "1000", "0011223344556677", "4", "2")
+	f.addDisk("sda", "usb4/4-2", "0:0:0:0", "8:0", 125304832, true)
+
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	sup := NewSupervisor(mustConfig(t), store, quietLogger(), f.roots())
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { _ = sup.Run(ctx); close(stopped) }()
+	defer func() { cancel(); <-stopped }()
+
+	const key = "usb-090c:1000-0011223344556677"
+	waitFor := func(what string, cond func(*diskState) bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			sup.mu.Lock()
+			st := sup.disks[key]
+			ok := st != nil && cond(st)
+			sup.mu.Unlock()
+			if ok {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: nothing within 5s", what)
+			}
+		}
+	}
+	waitFor("first discovery", func(*diskState) bool { return true })
+
+	if err := sup.RequestScan(key, false); err != nil {
+		t.Fatal(err)
+	}
+	// The fake node cannot be opened, so the round ends as soon as it begins.
+	// Adopted with the request spent is the proof that it began; no longer
+	// scanning is what lets the store close under it.
+	waitFor("round after Scan now", func(st *diskState) bool {
+		return !st.ScanRequested && !st.Meta.AdoptedAt.IsZero() && !st.Scanning
+	})
+}

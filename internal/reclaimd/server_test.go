@@ -91,3 +91,29 @@ func TestFleetListComesBackInAStableOrder(t *testing.T) {
 		}
 	}
 }
+
+// A Scan now the daemon has taken but not yet started used to live only in the
+// tab that sent it, so reloading in that gap brought the button back for a
+// round already on its way. The list has to say so itself.
+func TestFleetListReportsAScanRequestNotYetStarted(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	sup := &Supervisor{store: store, logger: quietLogger(), disks: map[string]*diskState{
+		"usb-a": {Key: "usb-a", Present: true},
+	}}
+	s := NewServer(mustConfig(t), store, sup, quietLogger())
+
+	if v := s.views(false); len(v) != 1 || v[0].ScanRequested {
+		t.Fatalf("before the request: %+v", v)
+	}
+	if err := sup.RequestScan("usb-a", false); err != nil {
+		t.Fatal(err)
+	}
+	if v := s.views(false); len(v) != 1 || !v[0].ScanRequested {
+		t.Fatalf("after the request: %+v, want scan_requested", v)
+	}
+}

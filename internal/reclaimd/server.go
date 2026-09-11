@@ -264,6 +264,7 @@ func (s *Server) views(detail bool) []DiskView {
 			v.SuppressTs = st.Schedule.SuppressUntil.Unix()
 		}
 		v.LastOutcome = st.Schedule.LastOutcome
+		v.ScanRequested = st.ScanRequested
 		v.BytesWritten = st.Meta.BytesWritten
 		if st.Live != nil {
 			live := *st.Live

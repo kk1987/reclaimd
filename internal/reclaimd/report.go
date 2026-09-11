@@ -65,6 +65,11 @@ type DiskView struct {
 	NextScanTs  int64        `json:"next_scan_ts,omitempty"`
 	LastScanTs  int64        `json:"last_scan_ts,omitempty"`
 	SuppressTs  int64        `json:"suppress_until_ts,omitempty"`
+	// ScanRequested is a Scan now the daemon has accepted and not yet started.
+	// It is the daemon's to report rather than the page's to remember: a reload
+	// in between would otherwise offer the button again for a round that is
+	// already on its way.
+	ScanRequested bool `json:"scan_requested"`
 	// LastOutcome is what the previous round graded, which is what says
 	// whether a cooldown in progress is the six-hour kind or the
 	// twenty-four-hour kind -- and the difference is worth showing before

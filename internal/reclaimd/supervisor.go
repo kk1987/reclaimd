@@ -12,7 +12,8 @@ import (
 // discoveryInterval is how often discovery runs. It is slow on purpose:
 // discovery never touches the bus, but there is no reason to spin either -- a
 // stick that just appeared can wait 30 seconds to be noticed, and it has 30
-// minutes of probation ahead of it regardless.
+// minutes of probation ahead of it regardless. A round somebody asked for does
+// not wait for it; see Supervisor.wake.
 const discoveryInterval = 30 * time.Second
 
 // diskState is the supervisor's per-disk view. Anything durable lives in the
@@ -50,6 +51,15 @@ type Supervisor struct {
 	mu    sync.RWMutex
 	disks map[string]*diskState
 
+	// wake runs a tick out of turn, for Scan now. Whoever pressed it is watching
+	// the page, and leaving the round to the next discovery tick had them wait
+	// up to discoveryInterval for it to begin. A whole tick rather than
+	// considerDisk alone, because a round opens the device from the presence
+	// discovery found, and that is only as fresh as the last discovery. One slot
+	// is enough: a tick considers every disk, so a request that finds the slot
+	// taken is served by the tick already queued.
+	wake chan struct{}
+
 	// OnLive is called with every progress snapshot. The HTTP layer coalesces
 	// these; the supervisor just forwards them.
 	OnLive func(LiveProgress)
@@ -68,6 +78,7 @@ func NewSupervisor(cfg Config, store *Store, logger *slog.Logger, pl Platform) *
 		platform: pl,
 		scanner:  NewScanner(cfg, store, logger, pl),
 		disks:    map[string]*diskState{},
+		wake:     make(chan struct{}, 1),
 	}
 }
 
@@ -84,6 +95,8 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+			s.tick(ctx)
+		case <-s.wake:
 			s.tick(ctx)
 		}
 	}
@@ -270,6 +283,10 @@ func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput)
 		s.mu.Unlock()
 		s.notifyChange(st.Key, "SCAN_END")
 	}()
+	// Announced as the disk turns busy, before the device is even opened. The
+	// page learns that a round is running from this event, and it has no reason
+	// to wait out the open and the warm-up reads to be told.
+	s.notifyChange(st.Key, "SCAN_START")
 
 	dev, err := OpenDevice(in.Presence, s.cfg.BlockSizeFor(in.Presence.Identity), s.platform)
 	if err != nil {
@@ -300,7 +317,6 @@ func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput)
 		}
 	}
 
-	s.notifyChange(st.Key, "SCAN_START")
 	s.logger.Info("scan started", "disk", st.Key, "cursor", in.Schedule.Cursor)
 
 	res, err := s.scanner.Round(ctx, in)
@@ -619,6 +635,10 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 	}
 	st.Schedule.NextScanAt = time.Now()
 	st.ScanRequested = true
+	select {
+	case s.wake <- struct{}{}:
+	default: // a tick is already queued, and it will see this request
+	}
 	return nil
 }
 
