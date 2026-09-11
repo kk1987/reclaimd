@@ -104,8 +104,13 @@ p{margin:0}
 .skip{position:absolute;left:-9999px}
 .skip:focus{left:8px;top:8px;background:var(--surface);padding:8px;z-index:9}
 
+/* The bar runs edge to edge; what is in it sits on the page's column, so the
+   brand lines up with the left edge of the cards below and the controls with
+   their right edge, instead of drifting to the viewport's corners on a wide
+   screen. Below --maxw the two paddings are the same 20px. */
 .topbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;
-  padding:12px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
+  padding:12px max(20px,calc((100% - var(--maxw))/2 + 20px));
+  border-bottom:1px solid var(--line);background:var(--surface)}
 .brand{display:flex;flex-direction:column;gap:2px;min-width:0}
 .brand .name{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 10px;font-family:var(--cond);font-size:17px}
 .brand .tag{font-family:var(--sans);font-size:12px;color:var(--ink-3)}
