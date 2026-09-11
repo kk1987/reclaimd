@@ -6,7 +6,7 @@ import "errors"
 // Error codes
 //
 // These are the vocabulary the HTTP API speaks. The daemon never emits a
-// natural-language sentence: it emits one of these codes plus structured
+// natural-language sentence. It emits one of these codes plus structured
 // parameters, and the browser renders it into Chinese or English. Keeping the
 // boundary here is what makes the UI translatable without a translation layer
 // in Go.
@@ -52,8 +52,8 @@ var (
 	// not the same hardware. Refusing to scan is the only safe response.
 	ErrIdentityMismatch = errors.New("device identity mismatch")
 
-	// ErrAlignment is always our own bug, never the device's. It is kept
-	// separate from ErrMediaError precisely so an O_DIRECT mistake cannot hide
+	// ErrAlignment is always our own bug and never the device's. It is kept
+	// separate from ErrMediaError so that an O_DIRECT mistake cannot hide
 	// for months disguised as a mysterious flaky stick.
 	ErrAlignment = errors.New("o_direct alignment violation")
 
@@ -70,8 +70,8 @@ var (
 
 // ErrStateCorrupt and ErrStateUnsupported separate "this file is damaged" from
 // "this file is from a newer version". The second one must never be parsed
-// optimistically: reading a future schema with today's code and then writing it
-// back is how state gets destroyed rather than merely misread.
+// optimistically. Reading a future schema with today's code is a misread.
+// Writing it back afterwards destroys the state.
 var (
 	ErrStateCorrupt     = errors.New("state file corrupt")
 	ErrStateUnsupported = errors.New("state schema unsupported")

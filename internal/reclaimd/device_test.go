@@ -28,9 +28,9 @@ func TestAlignedBufferIsPageAligned(t *testing.T) {
 
 // realDevice gates the tests that need the physical stick. They are the only
 // way to confirm the O_DIRECT constant is right for the architecture, which is
-// the single most consequential portability trap in this program: on arm64
-// O_DIRECT and O_DIRECTORY have exactly each other's values, so a wrong
-// constant fails with ENOTDIR and looks like something else entirely.
+// the worst portability trap in this program: on arm64 O_DIRECT and
+// O_DIRECTORY have each other's values, so a wrong constant fails with ENOTDIR
+// and looks like something else entirely.
 func realDevice(t *testing.T) Presence {
 	t.Helper()
 	key := os.Getenv("RECLAIMD_TEST_DISK")

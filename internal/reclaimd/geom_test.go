@@ -426,7 +426,7 @@ func TestFreeBSDAlive(t *testing.T) {
 	}
 }
 
-// GEOM keeps devstat rows of its own for providers, named in full; the disk
+// GEOM keeps devstat rows of its own for providers, named in full. The disk
 // driver's row is the one with a unit number.
 func TestDevstatRowIsTheDriversRow(t *testing.T) {
 	le := binary.LittleEndian

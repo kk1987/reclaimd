@@ -39,8 +39,8 @@ func TestPublisherSendsEachFrameOnce(t *testing.T) {
 
 // The end of a round takes the queued frame with it. Frames are coalesced to
 // twice a second, so one produced in the last half-second is still in hand when
-// the round ends -- and delivered after SCAN_END it is the one ordering the
-// page cannot talk itself out of, because nothing further ever arrives.
+// the round ends. Delivered after SCAN_END, it would tell the page a scan is
+// running, and nothing further ever arrives to correct that.
 func TestScanEndDropsTheQueuedFrame(t *testing.T) {
 	store, err := OpenStore(t.TempDir(), quietLogger())
 	if err != nil {
@@ -63,8 +63,8 @@ func TestScanEndDropsTheQueuedFrame(t *testing.T) {
 
 // The fleet list used to be handed out in Go map order, which is deliberately
 // random: the cards changed places on every poll, and the disk the page selects
-// on load -- the first one in the list -- was whichever the runtime yielded
-// first. Present disks come first, then by key, and nothing else moves a card.
+// on load, the first one in the list, was whichever the runtime yielded first.
+// Present disks come first, then by key, and nothing else moves a card.
 func TestFleetListComesBackInAStableOrder(t *testing.T) {
 	store, err := OpenStore(t.TempDir(), quietLogger())
 	if err != nil {
@@ -118,8 +118,8 @@ func TestFleetListReportsAScanRequestNotYetStarted(t *testing.T) {
 	}
 }
 
-// A Stop takes the round a moment to act on, and a reload in that moment has to
-// show the round winding down rather than offer Stop again.
+// A Stop takes the round a moment to act on. A reload in that moment has to
+// show the round winding down, and it must not offer Stop again.
 func TestFleetListReportsARoundThatIsStopping(t *testing.T) {
 	store, err := OpenStore(t.TempDir(), quietLogger())
 	if err != nil {

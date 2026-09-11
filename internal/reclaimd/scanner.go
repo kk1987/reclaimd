@@ -9,8 +9,8 @@ import (
 )
 
 // segmentBitmap records which segments a round did not read. A skipped segment
-// is deferred, never abandoned: 1912 bits is 239 bytes for a 64 GB drive, so
-// carrying the debt forward across rounds costs nothing at all.
+// is deferred to a later round: 1912 bits is 239 bytes for a 64 GB drive, so
+// carrying the debt forward costs nothing.
 type segmentBitmap []byte
 
 func newSegmentBitmap(n int) segmentBitmap { return make(segmentBitmap, (n+7)/8) }
@@ -75,7 +75,7 @@ type RoundInput struct {
 //
 // Every numeric field carries a unit suffix (_mib, _ms, _n, _s) because the
 // frontend uses that suffix to decide how to format it. The daemon emits
-// numbers and codes; turning them into Chinese or English is the browser's job.
+// numbers and codes. Turning them into Chinese or English is the browser's job.
 type LiveProgress struct {
 	Disk      string  `json:"disk"`
 	RoundSeq  uint64  `json:"seq"`
@@ -117,9 +117,9 @@ type RoundResult struct {
 }
 
 // blocksPerSegment reads the segment geometry back off the round that was
-// actually run, rather than off the config. The config no longer knows the
-// block size on its own -- that was resolved from the disk -- and the latency
-// map carries the value the pass was measured with.
+// actually run. The config no longer knows the block size on its own, since
+// that is resolved from the disk, and the latency map carries the value the
+// pass was measured with.
 func (r RoundResult) blocksPerSegment(cfg Config) int {
 	if r.Latency == nil || r.Latency.BlockSize <= 0 {
 		return 0
@@ -129,12 +129,12 @@ func (r RoundResult) blocksPerSegment(cfg Config) int {
 
 // Round performs one pass with early backoff.
 //
-// The strategy rests on one finding: a slow read that COMPLETED has already
+// The strategy rests on one finding: a slow read that completed has already
 // handed the controller its read-reclaim trigger, so the refresh objective for
-// that block is met. What remains after that is only risk -- and 84% of the
-// dropouts in the forensics had a slow block within the preceding 10 MiB. So
-// the correct move on seeing a slow block is to leave, not to press on. The
-// backoff costs nothing and buys the whole margin.
+// that block is met. Pressing on only adds risk: 84% of the dropouts in the
+// forensics had a slow block within the preceding 10 MiB. So on seeing a slow
+// block the round backs off. That costs nothing, and it is where the whole
+// safety margin comes from.
 func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error) {
 	dev := in.Dev
 	// The device is the single source of truth for the read size: it was
@@ -191,7 +191,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 		if speed > 0 {
 			// The ETA has to include the rest the duty controller is going to
 			// take, or it becomes badly wrong the moment the controller backs
-			// off -- which is exactly when somebody is watching.
+			// off, which is exactly when somebody is watching.
 			remaining := float64(totalMiB - doneMiB)
 			eta = remaining/speed*(1+duty.RestRatio()) + 0
 		}
@@ -219,7 +219,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 	// segIdx survives the loop so the round knows whether it finished the
 	// ground it set out to cover. Every early exit here is a decision to stop,
 	// and a round that stopped is not the same observation as one that swept
-	// the disk -- the scheduler has to be able to tell them apart.
+	// the disk. The scheduler has to be able to tell them apart.
 	segIdx := 0
 sweep:
 	for ; segIdx < len(order); segIdx++ {
@@ -258,8 +258,8 @@ sweep:
 				break sweep
 
 			case errors.Is(err, ErrAlignment):
-				// Our own bug. Fail loudly rather than spending months
-				// disguised as a mysteriously flaky stick.
+				// Our own bug. Fail loudly, or it spends months disguised as
+				// a mysteriously flaky stick.
 				lat.Values[idx] = LatError
 				outcome, fatal = OutcomeCancelled, err
 				break sweep
@@ -334,8 +334,8 @@ sweep:
 			}
 		}
 
-		// Circuit breaker: past 5% slow on a meaningful sample the marginal
-		// value of continuing is small and the dropout risk is not.
+		// Circuit breaker: past 5% slow on a meaningful sample there is little
+		// to gain from continuing and a real risk of a dropout.
 		if blocksRead > 2000 && slow*20 > blocksRead {
 			outcome = OutcomeSlow
 			break
@@ -402,12 +402,12 @@ func (s *Scanner) outcomeFor(err error) string {
 	}
 }
 
-// onDropout runs the sequence whose ORDER is itself safety-critical.
+// onDropout handles a dropout. The order of its steps is safety-critical.
 //
-// The suppression window is fsynced first -- before logging, before the event,
-// before waiting for the device. Losing power one second from now must not lose
-// the 24 hours that keep the next boot from walking straight back into the same
-// fault on a disk that is carrying a mounted filesystem.
+// The suppression window is fsynced first, before logging, before the event,
+// and before waiting for the device. Losing power one second from now must not
+// lose the 24 hours that keep the next boot from walking straight back into the
+// same fault on a disk that is carrying a mounted filesystem.
 func (s *Scanner) onDropout(ctx context.Context, in RoundInput, seg int, off int64,
 	d time.Duration, seq uint64, perSeg int, blockSize int64) {
 
@@ -470,11 +470,11 @@ func (s *Scanner) deferBlock(key string, seq uint64, off int64, d time.Duration,
 
 // reprobe revisits the blocks that caused a backoff.
 //
-// The delay before a re-probe is not arbitrary. dmesg reports "read cache:
-// enabled" on this controller, so an immediate re-read would be served from its
-// buffer and report a healed block that was never touched. Waiting clears the
-// cache and, in the same stroke, gives the background reclaim time to finish --
-// which is the thing being tested.
+// The re-probe waits a delay first. dmesg reports "read cache: enabled" on this
+// controller, so an immediate re-read would be served from its buffer and
+// report a healed block that was never touched. Waiting clears the cache and
+// also gives the background reclaim time to finish, which is the thing being
+// tested.
 func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEntry,
 	base Baseline, lat *LatencyMap, blockSize int64) (healed, stillSlow int) {
 
@@ -482,19 +482,20 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 		return 0, 0
 	}
 	if len(entries) > s.cfg.ReprobeMax {
-		// Probe the ones that stopped the round, not a second sweep's worth.
+		// Probe the ones that stopped the round. Probing all of them would be
+		// a second sweep's worth.
 		entries = entries[:s.cfg.ReprobeMax]
 	}
 
-	// Wait the delay out instead of stepping over it.
+	// Wait the delay out, for every entry.
 	//
 	// This used to skip any entry still inside its window and leave it "for
-	// next round", which quietly guaranteed the opposite of what it says: a
-	// round that ends on the circuit breaker is short by construction -- the
-	// one that prompted this fix ran for 3m18s against a 10 minute delay -- so
-	// every entry was always still waiting, healed and still-slow were always
-	// zero, and the next round is an interval away and resumes at a cursor
-	// past these offsets anyway. The disks that trip the breaker fastest were
+	// next round", which quietly guaranteed the opposite of what it said: a
+	// round that ends on the circuit breaker is short by construction (the one
+	// that prompted this fix ran for 3m18s against a 10 minute delay), so every
+	// entry was always still waiting, healed and still-slow were always zero,
+	// and the next round is an interval away and resumes at a cursor past
+	// these offsets anyway. So the disks that trip the breaker fastest were
 	// the ones the healing measurement never ran on.
 	//
 	// Waiting costs nothing that matters: it is an idle sleep on an open
@@ -507,7 +508,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 		}
 	}
 	if wait > s.cfg.ReprobeDelay.Duration() {
-		wait = s.cfg.ReprobeDelay.Duration() // defensive: a clock jump, not a plan
+		wait = s.cfg.ReprobeDelay.Duration() // defensive, against a clock jump
 	}
 	if wait > 0 {
 		if err := sleepCtx(ctx, wait); err != nil {
@@ -515,7 +516,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 		}
 	}
 
-	// The budget covers the probing, not the waiting.
+	// The budget covers only the probing, so it starts after the wait.
 	deadline := time.Now().Add(s.cfg.ReprobeBudget.Duration())
 	n := 0
 	for _, e := range entries {
@@ -584,10 +585,9 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 // segmentOrder decides what to read and in what order: everything owed from
 // last round first, then a full rotation starting from the cursor.
 //
-// Restarting at zero every round would be a real bug rather than a
-// simplification: a segment at 40 GiB that reliably drops the device would mean
-// everything past it never gets refreshed at all, which is precisely the
-// failure this daemon exists to prevent.
+// Restarting at zero every round would be a bug: a segment at 40 GiB that
+// reliably drops the device would mean everything past it never gets
+// refreshed, which is the failure this daemon exists to prevent.
 func segmentOrder(segCount int, owed segmentBitmap, cursor, blockSize int64, perSeg int) []int {
 	seen := make([]bool, segCount)
 	order := make([]int, 0, segCount)
@@ -614,13 +614,13 @@ func segmentOrder(segCount int, owed segmentBitmap, cursor, blockSize int64, per
 	return order
 }
 
-// resumeInterrupted is where a round that was interrupted -- stopped from the
-// page, or cut off by a shutdown -- leaves the next one to start, and it carries
+// resumeInterrupted decides where a round that was interrupted (stopped from
+// the page, or cut off by a shutdown) leaves the next one to start, and carries
 // forward the debt the round had not reached. nextCursor steps past the segment
-// a round ended in, which is right when that segment is what ended it. Nothing
-// did here, so stepping past it left the rest of the segment unread for a whole
-// rotation; and owed segments still ahead dropped out of the debt, because the
-// bitmap a round saves holds only what it deferred itself.
+// a round ended in, which is right when that segment is what ended it. Here
+// nothing did, so stepping past it left the rest of the segment unread for a
+// whole rotation. Owed segments still ahead also dropped out of the debt,
+// because the bitmap a round saves holds only what it deferred itself.
 func resumeInterrupted(order []int, at int, owed, deferred segmentBitmap,
 	prevCursor, segBytes int64) int64 {
 
@@ -639,8 +639,8 @@ func resumeInterrupted(order []int, at int, owed, deferred segmentBitmap,
 
 // nextCursor advances the rotating start point for the following round.
 //
-// After a dropout the cursor deliberately jumps PAST the segment that caused
-// it, so the next round approaches it last -- by which time it has had a full
+// After a dropout the cursor deliberately jumps past the segment that caused
+// it, so the next round approaches it last, by which time it has had a full
 // suppression window of idle in which the controller can finish reclaiming it.
 func nextCursor(prev, reached int64, outcome string, blockSize int64, perSeg int, blockCount int64) int64 {
 	segBytes := int64(perSeg) * blockSize
@@ -651,7 +651,7 @@ func nextCursor(prev, reached int64, outcome string, blockSize int64, perSeg int
 	var c int64
 	switch outcome {
 	case OutcomeClean, OutcomeMediaErrors:
-		// A full rotation completed; start the next one where this one began.
+		// A full rotation completed. Start the next one where this one began.
 		c = prev
 	default:
 		c = alignDown(reached, segBytes) + segBytes

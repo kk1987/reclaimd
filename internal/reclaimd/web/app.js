@@ -19,20 +19,20 @@ const state = {
   /* Disks with a Scan now still on the wire. Only that gap is the page's to
      cover: once the daemon has the request, the list says scan_requested until
      the round starts and scanning while it runs, and a reload reads the same.
-     Remembering the request here instead is what let a reload in between offer
+     When only the page remembered the request, a reload in between offered
      the button again. */
   scanSending: new Set(),
   system: null, // GET /system: the build and the machine
 };
 
 /* Blocks per superblock. The daemon's own segment size is 32 MiB at 1 MiB
-   blocks; the mod histogram and the stubborn-region scan both key off it. */
+   blocks. The mod histogram and the stubborn-region scan both key off it. */
 const BLOCKS_PER_SEGMENT = 32;
 
 /* Holds the disk's button down while the request is unanswered, then hands it
-   to the list fetched right after -- which keeps it down if the round is queued
-   or running, and lets it up if the round has already been and gone. Throws
-   what the daemon answered, for the caller to explain. */
+   to the list fetched right after. The list keeps it down if the round is
+   queued or running, and lets it up if the round has already been and gone.
+   Throws what the daemon answered, for the caller to explain. */
 async function sendScan(key, iMeanIt) {
   state.scanSending.add(key);
   renderDiskbar();
@@ -86,9 +86,9 @@ async function boot() {
     onProgress: onProgress,
     onState: async () => {
       /* Scanning on or off is exactly what these events report, and the disk
-         card draws that from the list rather than from the detail. Refreshing
-         only the detail leaves the card saying Scanning after the round ended,
-         and its button disabled with it. */
+         card draws that from the list. Refreshing only the detail leaves the
+         card saying Scanning after the round ended, and its button disabled
+         with it. */
       try { state.disks = await api.getDisks(); } catch (e) { /* below reports */ }
       /* A soft refresh keeps the profiles already in hand, which is only right
          while the page is still looking at the same disk. */
@@ -102,7 +102,7 @@ async function boot() {
 }
 
 function wireChrome() {
-  setConn(); // label the initial idle dot; it has no meaning until it has one
+  setConn(); // label the initial idle dot: it means nothing until it has one
   document.querySelectorAll('[data-lang]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.lang === I.lang()));
     b.addEventListener('click', () => {
@@ -112,8 +112,8 @@ function wireChrome() {
       I.applyStatic();
       setConn();
       setTheme();
-      /* Re-render from the cached payloads: switching language must not cost a
-         single request, which matters when the server is a router. */
+      /* Re-render from the cached payloads: switching language must not cost
+         a request, which matters when the server is a router. */
       renderAll();
     });
   });
@@ -132,8 +132,8 @@ function wireChrome() {
   $('theme-btn').addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme');
     const next = cur === 'dark' ? 'light' : cur === 'light' ? null : 'dark';
-    /* Going back to "follow the system" means REMOVING the attribute, not
-       setting it to "auto" -- the CSS keys off its absence. */
+    /* Going back to "follow the system" means removing the attribute: the CSS
+       keys off its absence, so setting it to "auto" would not do. */
     if (next) document.documentElement.setAttribute('data-theme', next);
     else document.documentElement.removeAttribute('data-theme');
     try {
@@ -173,14 +173,14 @@ async function refreshAll() {
   await refreshDetail();
 }
 
-/* Keeps the selection on a disk that still exists. One can leave the fleet at
-   any moment -- forgotten here or in another tab, or swept by the daemon when a
-   stick that never finished probation was pulled -- and fetching the detail for
-   a key that is gone answers 404, which the page would report as a dead
+/* Keeps the selection on a disk that still exists. A disk can leave the fleet
+   at any moment, forgotten here or in another tab, or swept by the daemon when
+   a stick that never finished probation was pulled. Fetching the detail for a
+   key that is gone answers 404, which the page would report as a dead
    connection. The list arrives ordered with the present disks first, so falling
    back to the head of it lands on a disk that is actually in a port. Returns
-   whether the selection moved, which is what tells a soft refresh that the
-   profiles it was about to keep belong to a different disk. */
+   whether the selection moved, which tells a soft refresh that the profiles it
+   was about to keep belong to a different disk. */
 function reselect() {
   if (state.selected && state.disks.some((d) => d.key === state.selected)) return false;
   state.selected = state.disks[0]?.key || null;
@@ -256,9 +256,9 @@ function renderDiskbar() {
     const size = d.identity?.size_bytes ? I.fmtBytes(d.identity.size_bytes) : '';
     /* "Generic Flash Disk" is what a whole class of sticks calls itself, so the
        name alone cannot tell two of them apart. The serial can, and it is the
-       one printed on the device -- the same string `refresh` demands back as
-       its confirmation. Fall back to the key, which is unique even when the
-       stick reports no serial at all. */
+       one printed on the device, the same string `refresh` demands back as its
+       confirmation. Fall back to the key, which is unique even when the stick
+       reports no serial at all. */
     const ident = d.identity?.serial || d.key;
     let status = d.present ? '' : I.t('disk.absent');
     if (d.scanning) status = I.t(d.stopping ? 'disk.stopping' : 'disk.scanning');
@@ -267,7 +267,7 @@ function renderDiskbar() {
 
     /* "Scan now" is only an action when a scan is not the current state. It
        used to sit there enabled mid-round, where pressing it set next_scan_at
-       to now and nothing else happened -- an control that looks like it worked
+       to now and nothing else happened: a control that looked like it worked
        and did nothing. */
     const scanning = d.scanning;
     const requested = d.scan_requested || state.scanSending.has(d.key);
@@ -279,16 +279,16 @@ function renderDiskbar() {
       : 'disk.scanNow';
 
     /* Forgetting is the only destructive thing this page can do, so it is the
-       only button that asks first. Mid-round it is refused rather than queued:
+       only button that asks first. Mid-round it is refused instead of queued:
        the round would write the history straight back when it ended. */
     const forgettable = !scanning;
 
     /* Mid-round the maintain switch is a Stop instead. Excluding never ended a
        pass, only the ones after it, so offering it while one ran offered the
-       wrong thing; the switch comes back with the idle disk. The round takes a
-       moment to act on a stop -- it ends at a segment boundary or a rest, and a
-       read already in the kernel finishes -- so the daemon's stopping holds the
-       button down until it has. */
+       wrong thing. The switch comes back with the idle disk. The round takes a
+       moment to act on a stop: it ends at a segment boundary or a rest, and a
+       read already in the kernel finishes. The daemon's stopping holds the
+       button down until the round has. */
     const stopping = scanning && d.stopping;
     const toggleTitle = stopping ? 'disk.stopWait'
       : scanning ? 'disk.stopAction'
@@ -325,8 +325,8 @@ function renderDiskbar() {
     el.querySelector('[data-scan]').addEventListener('click', async (ev) => {
       ev.stopPropagation();
       if (!scannable) return;
-      // Disabled on the click, not on the answer: the gap between the two is
-      // the race, and it is a network round trip wide.
+      // Disabled on the click. Waiting for the answer would leave a gap a
+      // network round trip wide, and that gap is the race.
       ev.currentTarget.disabled = true;
       try {
         await sendScan(d.key, false);
@@ -334,9 +334,9 @@ function renderDiskbar() {
         if (err.code === 'SCAN_IN_PROGRESS') { toast(I.t('disk.scanRunning')); return; }
         if (err.code !== 'SCAN_SUPPRESSED') { toast(err.message); return; }
         /* The refusal is the window doing its job, so the way past it is a
-           second, separate act rather than a retry of the same click: the
-           dialog names what opened the window and how much of it is left, and
-           the override is recorded as an event either way. */
+           second, separate act: the dialog names what opened the window and
+           how much of it is left, and the override is recorded as an event
+           either way. */
         const left = d.suppress_until_ts
           ? I.fmtDur(d.suppress_until_ts - Math.floor(Date.now() / 1000)) : '';
         const why = I.t(d.last_outcome === 'dropout'
@@ -359,8 +359,8 @@ function renderDiskbar() {
           await api.stopScan(d.key);
           toast(I.t('toast.stopping'));
         } catch (err) {
-          /* NOT_SCANNING is the round having ended on its own while the card
-             still showed it; the refresh below catches the page up either way. */
+          /* NOT_SCANNING means the round ended on its own while the card still
+             showed it. The refresh below catches the page up either way. */
           if (err.code !== 'NOT_SCANNING') toast(err.message);
         }
         await refreshAll();
@@ -376,9 +376,9 @@ function renderDiskbar() {
       ev.stopPropagation();
       if (!forgettable) return;
       /* A stick still in its port is rediscovered within 30 seconds, so
-         forgetting it is not the same act as forgetting an absent one and must
-         not be described as if it were: the history goes, the disk comes back
-         as a stranger and starts its probation over. */
+         forgetting it is a different act from forgetting an absent one, and
+         the dialog says so: the history goes, the disk comes back as a
+         stranger and starts its probation over. */
       if (!confirm(I.t(d.present ? 'confirm.forgetPresent' : 'confirm.forget', { name }))) return;
       ev.currentTarget.disabled = true;
       try {
@@ -404,8 +404,8 @@ function renderVerdict() {
   const h = d.health || { grade: 'unknown', rule: 'NO_COMPLETE_PASS' };
   sec.dataset.grade = h.grade;
   $('verdict-line').textContent = I.t('grade.' + h.grade);
-  /* The rule that fired is printed, not a score. A score would answer "how
-     bad"; the question is "what should I do about it". */
+  /* The rule that fired is printed. A score would answer "how bad", and the
+     question is "what should I do about it". */
   $('verdict-why').textContent = I.t('rule.' + h.rule, I.fmtParams(h.params));
 
   $('kpi-next').textContent = d.next_scan_ts ? I.fmtRel(d.next_scan_ts) : '—';
@@ -436,8 +436,8 @@ function renderControllers() {
     let body = '';
     if (c.formula) body += `<div><span class="cap">${I.t('ctrl.formula')}</span> <code>${esc(c.formula)}</code></div>`;
     if (c.whatif) {
-      /* The strongest single element on the page: it turns "trust the adaptive
-         algorithm" into three numbers anybody can check next week. */
+      /* The what-if turns "trust the adaptive algorithm" into three numbers
+         anybody can check next week. */
       const w = c.whatif;
       body += `<div class="whatif"><span class="cap">${I.t('ctrl.whatif')}</span>` +
         `<span>${I.t('whatif.clean', { v: I.fmtDur(w.clean_h * 3600) })}</span>` +
@@ -519,11 +519,10 @@ function renderFreshness() {
 
   const oldest = state.detail?.oldest_data_s;
   const never = Array.prototype.reduce.call(state.freshness, (n, v) => n + (v === 0 ? 1 : 0), 0);
-  /* The single most honest measure of what this tool is protecting, so it gets
-     headline size rather than a row in a table. The age leaves out segments
-     never read at all, and while any remain the headline says so: "the stalest
-     data" next to a legend of thousands of stale segments read as a
-     contradiction. */
+  /* The most honest measure of what this tool is protecting, so it gets
+     headline size. The age leaves out segments never read at all, and while
+     any remain the headline says so: "the stalest data" next to a legend of
+     thousands of stale segments read as a contradiction. */
   let head = oldest ? I.t(never > 0 ? 'fresh.oldestRead' : 'fresh.oldest',
     { age: I.fmtDur(oldest) }) : '';
   if (never > 0) head += `<span class="est"> · ${I.t('fresh.never', { n: never })}</span>`;
@@ -545,9 +544,9 @@ function renderFreshness() {
    freshness map above it just argued for, with the key and serial filled in.
 
    That does weaken gate 1, whose point is making somebody look at the device
-   rather than paste a string. Filling in the serial catches the wrong drive but
-   no longer proves anyone went and looked, and README says so where the gates
-   are listed rather than only here. */
+   instead of pasting a string. Filling in the serial still catches the wrong
+   drive, but it no longer proves anyone went and looked. README says so where
+   the gates are listed, as well as here. */
 function renderRewrite() {
   const d = state.detail;
   const sec = $('rewrite');
@@ -587,9 +586,9 @@ function renderRewrite() {
 }
 
 /* navigator.clipboard exists only in a secure context, and this page is served
-   over plain HTTP as often as not -- a router's LAN address has no certificate.
-   So the deprecated path is the one that actually runs there, and neither is
-   allowed to be the only one. */
+   over plain HTTP as often as not, since a router's LAN address has no
+   certificate. So the deprecated path is the one that actually runs there, and
+   neither can be the only one. */
 async function copyText(text) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
@@ -601,8 +600,8 @@ async function copyText(text) {
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
-    /* Off-screen rather than hidden: a display:none textarea cannot be
-       selected, and the selection is what execCommand copies. */
+    /* Moved off-screen. A display:none textarea cannot be selected, and the
+       selection is what execCommand copies. */
     ta.style.cssText = 'position:fixed;left:-9999px;top:0';
     document.body.appendChild(ta);
     ta.select();
@@ -662,9 +661,9 @@ function renderEvents() {
     const parts = Object.entries(params)
       .filter(([k]) => !['offsetMib'].includes(k))
       .slice(0, 3).map(([k, v]) => `${k}=${v}`);
-    /* Worked out here rather than stored, so every pass already in the log gets
-       one too: what the pass read over how long it ran, rests and the re-probe
-       wait included. */
+    /* Worked out on the page, so every pass already in the log gets one too:
+       what the pass read over how long it ran, rests and the re-probe wait
+       included. */
     const raw = e.params || {};
     if (e.type === 'ROUND' && raw.read_mib > 0 && raw.elapsed_s > 0) {
       parts.push(`avgSpeed=${I.fmtSpeed(raw.read_mib / raw.elapsed_s)}`);
@@ -686,10 +685,10 @@ function renderFooter() {
 
 function renderLive(live) {
   const sec = $('live');
-  /* A round belongs here from the moment the daemon calls it running, not from
-     its first progress frame. That frame waits for the warm-up reads and the
-     baseline sample (256 blocks by default, up to 256 MiB), and the page would
-     otherwise sit on a scanning disk with no panel until then. */
+  /* A round belongs here from the moment the daemon calls it running. Its
+     first progress frame comes later, after the warm-up reads and the baseline
+     sample (256 blocks by default, up to 256 MiB), and waiting for it would
+     leave the page sitting on a scanning disk with no panel until then. */
   if (!live && !state.detail?.scanning) { sec.hidden = true; return; }
   sec.hidden = false;
   if (!live) {
@@ -746,14 +745,10 @@ function scheduleRedraw() {
   });
 }
 
-// A coloured dot with no accessible name is a dot nobody can read. The label
-// is the only thing that says what green means, so it is set with the state
-// rather than left to a legend somewhere else on the page. The state is kept
-// so a language switch can relabel it without waiting for the next change.
 // The theme button cycles dark -> light -> follow the system, so its label has
-// to name the state it is in as well as where the next press goes. Absent the
-// attribute means "follow the system", which is the state with no name of its
-// own in the DOM.
+// to name the state it is in as well as where the next press goes. An absent
+// attribute means "follow the system", the one state with no name of its own
+// in the DOM.
 function setTheme() {
   const el = $('theme-btn');
   const label = I.t('theme.' + (document.documentElement.getAttribute('data-theme') || 'system'));
@@ -761,6 +756,10 @@ function setTheme() {
   el.setAttribute('aria-label', label);
 }
 
+// A coloured dot with no accessible name is a dot nobody can read. The label
+// is the only thing that says what green means, so it is set along with the
+// state instead of in a legend somewhere else on the page. The state is kept
+// so a language switch can relabel it without waiting for the next change.
 function setConn(s) {
   const el = $('conn');
   if (s) el.dataset.state = s;

@@ -8,18 +8,18 @@ import (
 
 // LatencyUnit is the quantum of a stored latency sample.
 //
-// 32us was chosen against the measured distribution rather than picked round.
-// One uint16 then covers 0..2.097s, which brackets BOTH the 10ms normal read
-// and the 1500-1800ms controller hang with room to spare, while still resolving
-// 0.3% at the 10ms baseline. Milliseconds would throw away everything below
-// 1ms of variation; microseconds would top out at 65ms and clip every single
+// 32us was fitted to the measured distribution, which is why it is not a round
+// number. One uint16 then covers 0..2.097s, which brackets both the 10ms normal
+// read and the 1500-1800ms controller hang with room to spare, while still
+// resolving 0.3% at the 10ms baseline. Milliseconds would throw away everything
+// below 1ms of variation. Microseconds would top out at 65ms and clip every
 // event this tool exists to record.
 const LatencyUnit = 32 * time.Microsecond
 
-// Sentinels occupy the top of the range. Distinguishing "skipped" from "fast"
-// is not cosmetic: a round that backed off a lot is mostly skipped blocks, and
-// drawing those in the fast colour would make a deteriorating disk look
-// steadily healthier.
+// Sentinels occupy the top of the range. "Skipped" has to stay distinct from
+// "fast": a round that backed off a lot is mostly skipped blocks, and drawing
+// those in the fast colour would make a deteriorating disk look steadily
+// healthier.
 const (
 	LatSkipped uint16 = 0xFFFF // never read: backed off, deferred, round ended
 	LatError   uint16 = 0xFFFE // read returned an error
@@ -129,13 +129,12 @@ func (m *LatencyMap) UnmarshalBinary(b []byte) error {
 }
 
 // Coarse downsamples to one record per segment for long-term history, taking
-// the WORST sample in each bin.
+// the worst sample in each bin.
 //
-// Taking the max rather than the mean is the whole point. A segment holds
-// blocksPerSegment reads -- 32 at 1 MiB blocks, 512 at 64 KiB -- and a mean
-// over that many ordinary ones drags a single near-hang down to somewhere
-// near the baseline. The thing being stored is the outlier, so the outlier is
-// what survives.
+// A mean would be the wrong choice. A segment holds blocksPerSegment reads, 32
+// at 1 MiB blocks and 512 at 64 KiB, and a mean over that many ordinary ones
+// drags a single near-hang down to somewhere near the baseline. The outlier is
+// the thing worth storing, so the outlier is what survives.
 func (m *LatencyMap) Coarse(blocksPerSegment int) []uint16 {
 	if blocksPerSegment <= 0 {
 		return nil

@@ -8,8 +8,8 @@ import (
 
 // fakeTree builds a sysfs/procfs skeleton under t.TempDir(). Discovery is the
 // one part of this program that cannot be tested by unplugging things, and the
-// cases that matter most -- a multi-LUN reader, a batch of sticks sharing one
-// hardcoded serial -- are ones we cannot reproduce on the bench at all.
+// cases that matter most, a multi-LUN reader and a batch of sticks sharing one
+// hardcoded serial, are ones we cannot reproduce on the bench at all.
 type fakeTree struct {
 	t    *testing.T
 	root string
@@ -130,7 +130,7 @@ func TestDiscoverStableSerialKey(t *testing.T) {
 	}
 }
 
-// A card reader exposes several LUNs behind ONE USB device node, so all its
+// A card reader exposes several LUNs behind one USB device node, so all its
 // slots share a serial. That is not a collision and must not downgrade the key.
 func TestDiscoverMultiLUNKeepsStableKeys(t *testing.T) {
 	f := newFakeTree(t)
@@ -230,7 +230,8 @@ func TestDiscoverIgnoresRootDevice(t *testing.T) {
 		"25 1 8:113 / / rw,relatime shared:1 - ext4 /dev/sdh1 rw\n")
 	f.addUSBNode("usb4/4-8", "3333", "4444", "BOOTSTICK", "4", "8")
 	f.addDisk("sdh", "usb4/4-8", "0:0:0:0", "8:112", 30000000, true)
-	// The root filesystem lives on a partition of that disk, not the disk itself.
+	// The root filesystem lives on a partition of that disk. The whole disk is
+	// what has to be ignored.
 	f.write(filepath.Join("sys", "block", "sdh", "sdh1", "dev"), "8:113\n")
 
 	disks, err := DiscoverUSBDisks(f.roots())
@@ -243,7 +244,7 @@ func TestDiscoverIgnoresRootDevice(t *testing.T) {
 	}
 }
 
-// The stick renames itself across a re-enumeration; a stranger answering to a
+// The stick renames itself across a re-enumeration. A stranger answering to a
 // cloned serial must still be refused.
 func TestFindByKeyRejectsSizeMismatch(t *testing.T) {
 	f := newFakeTree(t)

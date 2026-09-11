@@ -2,10 +2,9 @@ package reclaimd
 
 import "testing"
 
-// The number that matters here is 120: a USB 2.0 stick behind usb-storage
-// reports max_sectors_kb=120, and reading it in 1 MiB blocks would time nine
-// SCSI commands as one, lifting the disk's p50 ninefold and taking the slow
-// threshold with it.
+// A USB 2.0 stick behind usb-storage reports max_sectors_kb=120. Reading it in
+// 1 MiB blocks would time nine SCSI commands as one, lifting the disk's p50
+// ninefold and taking the slow threshold with it.
 func TestBlockSizeFollowsTheTransferLimit(t *testing.T) {
 	cfg, err := LoadConfigFromFile("")
 	if err != nil {
@@ -43,7 +42,7 @@ func TestBlockSizeFollowsTheTransferLimit(t *testing.T) {
 	}
 }
 
-// An explicit setting still wins -- the derivation is a default, not a policy.
+// An explicit setting still wins. The derivation is only a default.
 func TestExplicitBlockSizeOverridesTheDerivation(t *testing.T) {
 	cfg, err := LoadConfigFromFile("")
 	if err != nil {
@@ -55,8 +54,8 @@ func TestExplicitBlockSizeOverridesTheDerivation(t *testing.T) {
 	}
 }
 
-// A block size the latency map cannot encode must be rejected at load, not
-// after a full pass has been measured with it.
+// A block size the latency map cannot encode must be rejected at load. Finding
+// out after a full pass has been measured with it is too late.
 func TestValidateRejectsNonPowerOfTwoBlockSize(t *testing.T) {
 	cfg, err := LoadConfigFromFile("")
 	if err != nil {

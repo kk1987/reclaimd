@@ -7,10 +7,10 @@ import (
 
 // Health grades and the rules that produce them.
 //
-// A rule ladder rather than a weighted score. A score would need coefficients
+// The grades come from a rule ladder. A weighted score would need coefficients
 // nobody can defend, and it would answer "how bad" when the question is "what
 // should I do". Each grade names the single rule that fired, and the UI prints
-// that rule -- so the verdict is arguable instead of oracular.
+// that rule, so the verdict can be argued with.
 const (
 	GradeUnknown  = "unknown"
 	GradeGood     = "good"
@@ -66,18 +66,17 @@ type DiskView struct {
 	LastScanTs  int64        `json:"last_scan_ts,omitempty"`
 	SuppressTs  int64        `json:"suppress_until_ts,omitempty"`
 	// ScanRequested is a Scan now the daemon has accepted and not yet started.
-	// It is the daemon's to report rather than the page's to remember: a reload
-	// in between would otherwise offer the button again for a round that is
-	// already on its way.
+	// The daemon reports it because a page that only remembered it would offer
+	// the button again after a reload, for a round that is already on its way.
 	ScanRequested bool `json:"scan_requested"`
 	// Stopping is a Stop the running round has been given and not yet acted on.
 	// Scanning stays true until it has, and a reload in between has to show the
-	// round winding down rather than offer Stop again.
+	// round winding down instead of offering Stop again.
 	Stopping bool `json:"stopping"`
-	// LastOutcome is what the previous round graded, which is what says
-	// whether a cooldown in progress is the six-hour kind or the
-	// twenty-four-hour kind -- and the difference is worth showing before
-	// anyone is offered the chance to skip it.
+	// LastOutcome is what the previous round graded, which says whether a
+	// cooldown in progress is the six-hour kind or the twenty-four-hour kind.
+	// The difference is worth showing before anyone is offered the chance to
+	// skip it.
 	LastOutcome string         `json:"last_outcome,omitempty"`
 	Controllers []Controller   `json:"controllers,omitempty"`
 	Rounds      []RoundSummary `json:"rounds,omitempty"`
@@ -87,20 +86,19 @@ type DiskView struct {
 	TotalHealed  int   `json:"healed_total_n"`
 	BytesWritten int64 `json:"bytes_written_by_tool"`
 	// OldestDataS is how long ago the least recently read region was last
-	// touched BY THIS TOOL. The overlay's own file reads refresh data too but
-	// are invisible from the raw device, so this is a lower bound on freshness,
-	// never an upper one.
+	// touched by this tool. The overlay's own file reads refresh data too but
+	// are invisible from the raw device, so this is a lower bound on freshness.
 	OldestDataS float64 `json:"oldest_data_s,omitempty"`
 	// IntervalS lets the freshness map key its colours to this disk's own
-	// current interval rather than to absolute days, so the map keeps reading
-	// as "are we behind?" no matter how the schedule has adapted.
+	// current interval instead of absolute days, so the map keeps reading as
+	// "are we behind?" no matter how the schedule has adapted.
 	IntervalS float64 `json:"interval_s,omitempty"`
 }
 
 // assessHealth walks the ladder from worst to best and stops at the first rule
 // that fires.
 func assessHealth(rounds []RoundSummary, cfg Config) Health {
-	// A cancelled pass -- stopped from the page, or cut off by a shutdown --
+	// A cancelled pass, whether stopped from the page or cut off by a shutdown,
 	// covered part of the disk at best, and judging by it put "clean end to
 	// end" on a drive whose last real pass had dropped off the bus. It is left
 	// out here for the reason the scheduler leaves it out of the interval.
@@ -160,8 +158,8 @@ func assessHealth(rounds []RoundSummary, cfg Config) Health {
 }
 
 // baselineDrift compares the newest baseline against the best ever seen. A disk
-// whose floor is rising is aging even when no single block trips a threshold --
-// that is the slow signal the per-block checks cannot see.
+// whose floor is rising is aging even when no single block trips a threshold.
+// That is the slow signal the per-block checks cannot see.
 func baselineDrift(rounds []RoundSummary) (drift, bestMs, nowMs float64) {
 	best := math.MaxFloat64
 	for _, r := range rounds {
@@ -182,8 +180,8 @@ func baselineDrift(rounds []RoundSummary) (drift, bestMs, nowMs float64) {
 }
 
 // controllersFor renders every adaptive parameter as a row the user can argue
-// with: the value, the rule that set it, the formula, and -- the part that
-// makes the policy legible -- what the next round would turn it into.
+// with: the value, the rule that set it, the formula, and what the next round
+// would turn it into. The last is what makes the policy legible.
 func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskIdentity,
 	live *LiveProgress) []Controller {
 	out := []Controller{{
@@ -201,7 +199,7 @@ func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskId
 	}}
 
 	// A read larger than the transfer limit is timed as several commands, so
-	// this row exists to show that it is not -- and to say so plainly when a
+	// this row exists to show that it is not, and to say so plainly when a
 	// hand-set block_size has made it one.
 	readSize := cfg.BlockSizeFor(id)
 	readReason := "ONE_SCSI_COMMAND"
@@ -252,10 +250,10 @@ func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskId
 		})
 	}
 
-	// The cooldown has two causes with two lengths -- 6h after a near-hang, 24h
-	// after a dropout -- and this row used to report both as a dropout. Telling
-	// somebody their drive fell off the bus when it did not is the worst thing
-	// a diagnostic can do: it is a hardware event they will go looking for in
+	// The cooldown has two causes with two lengths, 6h after a near-hang and 24h
+	// after a dropout, and this row used to report both as a dropout. Telling
+	// somebody their drive fell off the bus when it did not is a bad mistake for
+	// a diagnostic to make: it is a hardware event they will go looking for in
 	// dmesg and not find.
 	suppressed := time.Now().Before(sched.SuppressUntil)
 	sup := Controller{ID: "cooldown", Unit: "h", Reason: "NOT_TRIGGERED", Value: 0}

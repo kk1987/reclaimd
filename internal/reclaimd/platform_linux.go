@@ -15,7 +15,7 @@ const defaultStateDir = "/var/lib/reclaimd"
 // scanOpenFlags asks for O_DIRECT, which is what gets a Linux read of a block
 // device past the page cache and onto the device.
 //
-// O_EXCL is deliberately NOT passed. On a block device it means "fail if
+// O_EXCL is deliberately not passed. On a block device it means "fail if
 // mounted or claimed", and running while the disk is a live overlay is the
 // whole point.
 const scanOpenFlags = os.O_RDONLY | syscall.O_DIRECT | syscall.O_CLOEXEC
@@ -27,7 +27,7 @@ const scanOpenFlags = os.O_RDONLY | syscall.O_DIRECT | syscall.O_CLOEXEC
 const refreshOpenFlags = os.O_RDWR | syscall.O_EXCL | syscall.O_DIRECT | syscall.O_CLOEXEC
 
 // tmpfsMagic identifies a volatile filesystem. See OpenStore for why this
-// matters more than it looks.
+// matters.
 const tmpfsMagic = 0x01021994
 
 func onTmpfs(dir string) bool {

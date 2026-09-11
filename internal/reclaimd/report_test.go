@@ -7,10 +7,9 @@ import (
 
 // The cooldown row reported every suppression as a dropout, including the far
 // more common one that follows a near-hang. Telling somebody their drive fell
-// off the USB bus when it did not is the worst thing a diagnostic can say: it
-// is a hardware event they will go hunting for in dmesg and never find. The
-// two also differ in length -- 6h against 24h -- so the number did not match
-// the story either.
+// off the USB bus when it did not sends them hunting through dmesg for a
+// hardware event that never happened. The two also differ in length, 6h
+// against 24h, so the number did not match the story either.
 func TestCooldownNamesWhatActuallyHappened(t *testing.T) {
 	cfg := mustConfig(t)
 	id := DiskIdentity{MaxSectorsKB: 1024}
@@ -46,7 +45,7 @@ func TestCooldownNamesWhatActuallyHappened(t *testing.T) {
 
 // A cancelled pass read part of the disk at best. Judged by it, the verdict on a
 // drive whose last real pass had just dropped off the bus came out as healthy,
-// clean end to end -- one press of Stop away.
+// clean end to end. One press of Stop was all it took.
 func TestACancelledPassDoesNotReplaceTheVerdict(t *testing.T) {
 	cfg := mustConfig(t)
 	rounds := []RoundSummary{

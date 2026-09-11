@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// BuildInfo is what the binary was built from. Only the command knows it -- it
-// is linked into main -- so the command hands it to the server.
+// BuildInfo is what the binary was built from. It is linked into main, so only
+// the command knows it, and the command hands it to the server.
 type BuildInfo struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
@@ -51,7 +51,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 }
 
 // osPrettyName reads the first os-release file that exists, in the order the
-// format's specification gives. PRETTY_NAME is meant for exactly this; without
+// format's specification gives. PRETTY_NAME is meant for exactly this. Without
 // it, NAME and VERSION_ID say the same. A rolling distribution such as Arch has
 // no version to give, and its name alone is the right answer.
 func osPrettyName(paths ...string) string {

@@ -5,9 +5,9 @@ import "time"
 // DiskIdentity is what makes a stick the same stick across a re-enumeration
 // that renames sda to sdb.
 //
-// Serial comes from the USB device node (e.g. usb4/4-2), not from the SCSI LUN.
-// The SCSI level only echoes the INQUIRY strings, which are byte-identical on
-// every unit of a model and therefore useless for telling two sticks apart.
+// Serial comes from the USB device node (e.g. usb4/4-2). The SCSI LUN only
+// echoes the INQUIRY strings, which are byte-identical on every unit of a model
+// and therefore useless for telling two sticks apart.
 type DiskIdentity struct {
 	Key       string `json:"key"`        // stable and filesystem-safe
 	VendorID  string `json:"vendor_id"`  // "090c"
@@ -26,14 +26,14 @@ type DiskIdentity struct {
 
 	// KeyIsStable is false when the serial was missing or collided and the key
 	// had to be derived from the USB topology path instead. A path key changes
-	// when the stick moves to another port; that instability is deliberate,
-	// because mistaking one stick for another is worse than losing history.
+	// when the stick moves to another port. That instability is deliberate:
+	// mistaking one stick for another is worse than losing history.
 	KeyIsStable bool `json:"key_is_stable"`
 }
 
 // Presence is the live view of where a disk currently sits. Every field here is
-// invalidated by a single disconnect, which is exactly why it is kept apart
-// from DiskIdentity: the identity survives, the presence does not.
+// invalidated by a single disconnect, which is why it is kept apart from
+// DiskIdentity: the identity survives a disconnect and the presence does not.
 type Presence struct {
 	Identity   DiskIdentity `json:"identity"`
 	KernelName string       `json:"kernel_name"` // "sda"
@@ -46,7 +46,7 @@ type Presence struct {
 
 	// Ignored is set for devices found but deliberately not managed, together
 	// with the reason code. They are still reported so the UI can explain why
-	// a disk is being left alone instead of silently omitting it.
+	// a disk is being left alone.
 	Ignored       bool   `json:"ignored,omitempty"`
 	IgnoredReason string `json:"ignored_reason,omitempty"`
 }
@@ -72,9 +72,9 @@ type RoundSummary struct {
 	Outcome   string    `json:"outcome"`
 
 	// Completed says the sweep reached the end of the ground it set out to
-	// cover, as opposed to stopping early on a circuit breaker. The outcome
-	// alone cannot say this: a pass that swept the whole disk and found slow
-	// blocks and a pass that quit after 8% both come out as "slow".
+	// cover. It is false when a circuit breaker stopped the pass early. The
+	// outcome alone cannot say this: a pass that swept the whole disk and
+	// found slow blocks and one that quit after 8% both come out as "slow".
 	Completed bool `json:"completed"`
 
 	BlocksRead     int   `json:"blocks_read_n"`
@@ -111,7 +111,7 @@ const (
 )
 
 // Event is one line of events.jsonl. Params carries the structured values the
-// browser formats; the suffix on each key (_ms, _ts, _mib, _n, _pct) tells the
+// browser formats. The suffix on each key (_ms, _ts, _mib, _n, _pct) tells the
 // frontend how to render it without any extra metadata.
 type Event struct {
 	ID       uint64         `json:"id"`

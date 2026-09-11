@@ -9,22 +9,22 @@ import (
 	"time"
 )
 
-// discoveryInterval is how often discovery runs. It is slow on purpose:
-// discovery never touches the bus, but there is no reason to spin either -- a
+// discoveryInterval is how often discovery runs. It is slow on purpose.
+// Discovery never touches the bus, but there is no reason to spin either. A
 // stick that just appeared can wait 30 seconds to be noticed, and it has 30
 // minutes of probation ahead of it regardless. A round somebody asked for does
-// not wait for it; see Supervisor.wake.
+// not wait for it. See Supervisor.wake.
 const discoveryInterval = 30 * time.Second
 
 // diskState is the supervisor's per-disk view. Anything durable lives in the
-// store; this is the part that is allowed to be forgotten on restart.
+// store. This is the part that is allowed to be forgotten on restart.
 type diskState struct {
 	Key      string
 	Presence Presence
 	Meta     Meta
 	Schedule Schedule
 
-	// PresentSince is deliberately NOT persisted. After a daemon restart we
+	// PresentSince is not persisted, on purpose. After a daemon restart we
 	// cannot know whether the stick stayed plugged in, and assuming it did
 	// would let a stick that was swapped during the downtime skip probation.
 	PresentSince time.Time
@@ -37,13 +37,13 @@ type diskState struct {
 	// stop cancels the running round, and is set for exactly as long as
 	// Scanning is. StopRequested says it has been called: the round ends at its
 	// next segment boundary or rest, and until then the page shows it winding
-	// down rather than offer Stop a second time.
+	// down and does not offer Stop a second time.
 	stop          context.CancelFunc
 	StopRequested bool
 
 	// ScanRequested is somebody pressing Scan now. It carries the round past
-	// the waits that exist for scans nobody asked for -- probation and the
-	// grace after boot -- and is spent when the round starts or the disk goes.
+	// the waits that exist for scans nobody asked for (probation and the grace
+	// after boot), and is spent when the round starts or the disk goes.
 	ScanRequested bool
 }
 
@@ -60,18 +60,18 @@ type Supervisor struct {
 
 	// wake runs a tick out of turn, for Scan now. Whoever pressed it is watching
 	// the page, and leaving the round to the next discovery tick had them wait
-	// up to discoveryInterval for it to begin. A whole tick rather than
-	// considerDisk alone, because a round opens the device from the presence
+	// up to discoveryInterval for it to begin. It runs a whole tick. considerDisk
+	// alone would not do, because a round opens the device from the presence
 	// discovery found, and that is only as fresh as the last discovery. One slot
 	// is enough: a tick considers every disk, so a request that finds the slot
 	// taken is served by the tick already queued.
 	wake chan struct{}
 
 	// OnLive is called with every progress snapshot. The HTTP layer coalesces
-	// these; the supervisor just forwards them.
+	// these. The supervisor just forwards them.
 	OnLive func(LiveProgress)
 	// OnChange is called when a disk's lifecycle state changes, so the UI can
-	// refetch rather than have a full state push invented for it.
+	// refetch. That saves inventing a full state push for it.
 	OnChange func(key, change string)
 
 	heartbeat atomic64
@@ -181,13 +181,13 @@ func (s *Supervisor) tick(ctx context.Context) {
 		// keeping: never adopted means never scanned, so all that is on disk is
 		// the identity record discovery wrote the moment it appeared. Sweeping
 		// it is what stops disks/ growing an entry for every stick that was ever
-		// in a port for ten seconds -- and, for the ones whose key is not
-		// stable, one entry per port they were ever in.
+		// in a port for ten seconds, and, for the ones whose key is not stable,
+		// one entry per port they were ever in.
 		//
-		// Being excluded is a decision rather than junk, so it survives the
-		// sweep. Forgetting it would mean a stick that comes back finds no
-		// record of having been switched off, and gets adopted half an hour
-		// later by the machinery its owner had already said no to.
+		// Being excluded is a decision, so it survives the sweep. Forgetting it
+		// would mean a stick that comes back finds no record of having been
+		// switched off, and gets adopted half an hour later by the machinery
+		// its owner had already said no to.
 		if st.Meta.AdoptedAt.IsZero() && st.Meta.Enabled && !st.Scanning {
 			delete(s.disks, key)
 			if err := s.store.DeleteDisk(key); err != nil && !errors.Is(err, ErrNotFound) {
@@ -272,7 +272,7 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 	st.Scanning = true
 	st.ScanRequested = false
 	// A context of the round's own, so Stop can end it without ending the
-	// daemon. Made here rather than in runRound so that it exists from the
+	// daemon. It is made here, before runRound, so that it exists from the
 	// moment Scanning says a round does.
 	roundCtx, stop := context.WithCancel(ctx)
 	st.stop = stop
@@ -351,7 +351,7 @@ func (s *Supervisor) runRound(ctx, roundCtx context.Context, st *diskState, in R
 }
 
 // recordRound writes down what a round found. A cancelled round that read
-// nothing -- interrupted before its first block, or ended by an error on it --
+// nothing (interrupted before its first block, or ended by an error on it)
 // found nothing, and writing it down anyway put an empty pass at the head of
 // the history: a blank latency map, a blank row in the waterfall, a last scan
 // of just now, and a cursor back at zero, since a round that never got past its
@@ -456,12 +456,12 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 // updateFreshness stamps every segment this pass actually read.
 //
 // Segments that were skipped keep their previous timestamp on purpose: the map
-// exists to show what has NOT been refreshed lately, and quietly resetting a
-// deferred segment would hide exactly the thing worth seeing.
+// exists to show what has not been refreshed lately, and quietly resetting a
+// deferred segment would hide the thing worth seeing.
 //
-// The result is a lower bound on freshness, never an upper one. Reads performed
-// by whatever filesystem lives on the disk refresh data too, and they are
-// invisible from down here at the raw device.
+// The result is a lower bound on freshness. Reads performed by whatever
+// filesystem lives on the disk refresh data too, and they are invisible from
+// down here at the raw device.
 func (s *Supervisor) updateFreshness(key string, res RoundResult) {
 	perSeg := res.blocksPerSegment(s.cfg)
 	if perSeg <= 0 || res.Latency == nil {
@@ -492,8 +492,8 @@ func (s *Supervisor) updateFreshness(key string, res RoundResult) {
 }
 
 // ScanOnce runs a single pass synchronously and returns its summary. It is what
-// the scan command drives, and it obeys every rule the daemon obeys --
-// suppression included, because a manual run is impatience, not a reason to
+// the scan command drives, and it obeys every rule the daemon obeys,
+// suppression included. A manual run is impatience, and that is no reason to
 // re-enter a window opened by the disk taking a filesystem down.
 func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (RoundSummary, error) {
 	found, err := s.platform.Discover()
@@ -601,8 +601,8 @@ func (s *Supervisor) SetEnabled(key string, enabled bool) error {
 }
 
 // Forget drops a disk from the fleet and deletes everything stored under its
-// key. Refusing mid-round is not politeness: persistRound would write the
-// history straight back a moment later.
+// key. It refuses mid-round because persistRound would write the history
+// straight back a moment later.
 //
 // A disk that is still plugged in comes back on the next tick as a new arrival,
 // with a fresh probation and no history. That is all forgetting can mean while
@@ -634,10 +634,10 @@ func (s *Supervisor) Forget(key string) error {
 	return nil
 }
 
-// RequestScan asks for a round now. Suppression still applies: the escape hatch
-// is for impatience, not for overriding a safety window that exists because the
-// disk just took a filesystem down with it. The waits before a round nobody
-// asked for do not: see ScanRequested.
+// RequestScan asks for a round now. Suppression still applies. Asking is for
+// impatience, and impatience does not get to override a safety window that
+// exists because the disk just took a filesystem down with it. The waits
+// before a round nobody asked for do not apply. See ScanRequested.
 func (s *Supervisor) RequestScan(key string, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -653,11 +653,11 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 		return ErrScanInProgress
 	}
 	if left := time.Until(st.Schedule.SuppressUntil); left > 0 {
-		// force is the same escape hatch `scan -i-mean-it` has always had,
-		// reachable from the UI now rather than only over ssh. It clears the
-		// cooldown and nothing else, and it says so where it can be read back:
-		// overriding a window that exists because the disk misbehaved is a
-		// decision worth finding again later, next to whatever happened next.
+		// force is the same escape hatch `scan -i-mean-it` has always had, now
+		// reachable from the UI as well as over ssh. It clears the cooldown and
+		// nothing else, and it says so where it can be read back: overriding a
+		// window that exists because the disk misbehaved is a decision worth
+		// finding again later, next to whatever happened next.
 		if !force {
 			return ErrScanSuppressed
 		}
@@ -686,11 +686,12 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 }
 
 // StopScan ends the round running on a disk. The round notices at its next
-// segment boundary, or at once if it is resting; a read already in the kernel
-// finishes either way. It is written down as cancelled -- the outcome a shutdown
-// gives it, which moves nothing the scheduler learns from -- so the next attempt
-// comes an hour later and carries on from where this one stopped. Stopping is
-// not excluding: keeping the disk out of the schedule stays a separate choice.
+// segment boundary, or at once if it is resting. A read already in the kernel
+// finishes either way. The round is written down as cancelled, the outcome a
+// shutdown gives it. That moves nothing the scheduler learns from, so the next
+// attempt comes an hour later and carries on from where this one stopped.
+// Stopping does not exclude the disk. Keeping it out of the schedule is a
+// separate choice.
 func (s *Supervisor) StopScan(key string) error {
 	s.mu.Lock()
 	st, ok := s.disks[key]
@@ -703,8 +704,8 @@ func (s *Supervisor) StopScan(key string) error {
 		return ErrNotScanning
 	}
 	if st.StopRequested {
-		// A second press, from another tab or before the page caught up, is
-		// the same stop rather than another one.
+		// A second press, from another tab or before the page caught up, counts
+		// as the same stop.
 		s.mu.Unlock()
 		return nil
 	}
@@ -728,7 +729,7 @@ func (s *Supervisor) StopScan(key string) error {
 
 // Heartbeat is what the systemd watchdog pings from.
 //
-// It comes from the supervisor loop, never from a scanner. A scanner blocked
-// 1.8s inside pread is the expected case, not a hang, and a watchdog that
+// It comes from the supervisor loop and never from a scanner. A scanner blocked
+// 1.8s inside pread is not hung. That is the expected case, and a watchdog that
 // killed the process for it would fire precisely when things were working.
 func (s *Supervisor) Heartbeat() time.Time { return time.Unix(s.heartbeat.Load(), 0) }

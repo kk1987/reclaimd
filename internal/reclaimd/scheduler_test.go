@@ -47,7 +47,8 @@ func TestPartialPassResumesAtTheFloorNotTheInterval(t *testing.T) {
 }
 
 // A pass that swept the whole disk keeps the ordinary cadence, however it
-// graded: the point of the resume rule is unread ground, not bad news.
+// graded: the resume rule is there for unread ground, and a full pass has left
+// none.
 func TestCompletePassKeepsTheInterval(t *testing.T) {
 	cfg := mustConfig(t)
 	now := time.Now()

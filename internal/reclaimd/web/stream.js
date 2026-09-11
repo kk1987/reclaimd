@@ -34,7 +34,7 @@ export function connect(handlers) {
       close();
       failures++;
       /* Three consecutive failures means EventSource is not going to work here
-         -- an old browser, a proxy that buffers -- so fall back rather than
+         (an old browser, a proxy that buffers), so fall back instead of
          retrying forever in silence. */
       if (failures >= 3) startPolling();
       else if (!closed) setTimeout(open, Math.min(1000 * failures, 5000));

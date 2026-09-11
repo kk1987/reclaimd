@@ -15,10 +15,10 @@ import (
 // Roots is the Linux implementation and freeBSD the FreeBSD one. A kernel
 // without one still builds, and says so the first time it is asked for a disk.
 type Platform interface {
-	// Discover lists every whole disk behind USB -- the ones deliberately left
-	// alone included -- with keys assigned. It must not open a device: on a
-	// stick left to autosuspend, a poll that touched the bus would wake it
-	// every time.
+	// Discover lists every whole disk behind USB, including the ones
+	// deliberately left alone, with keys assigned. It must not open a device:
+	// on a stick left to autosuspend, a poll that touched the bus would wake
+	// it every time.
 	Discover() ([]Presence, error)
 
 	// Alive reports whether a disk is still attached as the same hardware. It
@@ -47,7 +47,7 @@ var guardedMounts = map[string]bool{"/": true, "/boot": true, "/boot/efi": true,
 //
 // Some vendors ship an entire production run with one hardcoded serial. Two
 // sticks answering to the same key would silently share history and, worse,
-// could be mistaken for each other after a re-enumeration. Downgrading BOTH
+// could be mistaken for each other after a re-enumeration. Downgrading both
 // sides of a collision is deliberate: an unstable key that forgets history
 // across a port change is much cheaper than a stable key pointing at the wrong
 // hardware.
@@ -75,10 +75,10 @@ func assignKeys(disks []Presence) {
 		sk := serialKey(*id)
 		switch {
 		case id.Serial == "" || len(nodesPerSerial[sk]) > 1:
-			// Downgrade BOTH sides of a collision. A path key changes when the
+			// Downgrade both sides of a collision. A path key changes when the
 			// stick moves to another port, and that instability is the point:
 			// losing history is far cheaper than attributing one stick's
-			// history -- and its dropout suppression -- to another.
+			// history, and its dropout suppression, to another.
 			id.Key = fmt.Sprintf("path-%s:%s-b%s-p%s-%d",
 				id.VendorID, id.ProductID, id.BusNum, id.DevPath, id.SizeBytes)
 			id.KeyIsStable = false
@@ -122,7 +122,7 @@ func sanitizeKey(s string) string {
 // FindByKey re-resolves a key to wherever the disk lives right now.
 //
 // This is the function that makes a dropout survivable. After a re-enumeration
-// the old path may well name a DIFFERENT disk, so nothing may be reused from
+// the old path may well name a different disk, so nothing may be reused from
 // before: the whole presence is rebuilt from a fresh scan, and the capacity is
 // re-checked as a last line of defence against a stranger answering to a
 // cloned serial.

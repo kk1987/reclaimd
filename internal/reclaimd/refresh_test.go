@@ -10,8 +10,8 @@ import (
 
 // fakeRefreshDev stands in for the block device. A dropout in the middle of a
 // whole-drive rewrite cannot be staged against real hardware, and it is the one
-// path where getting recovery wrong leaves a drive half-rewritten -- worse than
-// either finishing or never starting.
+// path where getting recovery wrong leaves a drive half-rewritten, which is
+// worse than either finishing or never starting.
 type fakeRefreshDev struct {
 	written   map[int64]int
 	readCount map[int64]int
@@ -21,7 +21,7 @@ type fakeRefreshDev struct {
 	alive     bool
 	reopenErr error
 	// beforeWrite runs at the top of every write, dropouts included, so a test
-	// can act at a chosen point mid-pass -- cancel the context, say.
+	// can do something at a chosen point mid-pass, such as cancel the context.
 	beforeWrite func(off int64)
 
 	opens, closes, syncs int
@@ -35,8 +35,8 @@ func newFakeRefreshDev() *fakeRefreshDev {
 	}
 }
 
-// open yields a handle; state stays on the device so coverage can be checked
-// across reopens, which is the whole point.
+// open yields a handle. State stays on the device so coverage can be checked
+// across reopens.
 func (d *fakeRefreshDev) open() refreshTarget {
 	d.opens++
 	return &fakeHandle{dev: d}
@@ -120,8 +120,8 @@ func runRewriteCtx(t *testing.T, ctx context.Context, d *fakeRefreshDev, blocks 
 		0, blocks*rBlk, rBlk, rewrite, maxDrops)
 }
 
-// The property that matters: a dropout must not leave a hole. Every block in
-// range has to end up written, including the one that took the bus down.
+// A dropout must not leave a hole. Every block in range has to end up written,
+// including the one that took the bus down.
 func TestRefreshLeavesNoHoleAfterDropouts(t *testing.T) {
 	const blocks = 64
 	d := newFakeRefreshDev()
@@ -152,8 +152,8 @@ func TestRefreshLeavesNoHoleAfterDropouts(t *testing.T) {
 	}
 }
 
-// The block that dropped the bus is retried, not stepped over. Skipping it
-// would leave a hole in the very refresh being performed.
+// The block that dropped the bus is retried. Stepping over it would leave a
+// hole in the refresh.
 func TestRefreshRetriesTheOffendingBlock(t *testing.T) {
 	d := newFakeRefreshDev()
 	d.dropWrite[7*rBlk] = 2 // fails twice before letting the write land
@@ -185,8 +185,8 @@ func TestRefreshGivesUpPastTheDropoutBudget(t *testing.T) {
 }
 
 // A single unreadable sector is not a dropout. Treating every EIO as one meant
-// one bad sector burned the whole dropout budget -- close, reattach, retry the
-// same block, fail again -- and aborted a refresh that should have stepped over
+// one bad sector burned the whole dropout budget (close, reattach, retry the
+// same block, fail again) and aborted a refresh that should have stepped over
 // it. The device staying present in sysfs is what tells the two apart.
 func TestRefreshSkipsMediaErrorWithoutWritingItBack(t *testing.T) {
 	d := newFakeRefreshDev()
@@ -202,9 +202,8 @@ func TestRefreshSkipsMediaErrorWithoutWritingItBack(t *testing.T) {
 	if st.Skipped != 1 {
 		t.Errorf("skipped = %d, want 1", st.Skipped)
 	}
-	// The guard that matters most in the whole file: never write back a buffer
-	// we failed to fill, or a recoverable retention problem becomes permanent
-	// data loss.
+	// Never write back a buffer we failed to fill, or a recoverable retention
+	// problem becomes permanent data loss.
 	if n := d.written[5*rBlk]; n != 0 {
 		t.Errorf("block whose read failed was written %d times; it must never be "+
 			"written back", n)
@@ -266,9 +265,9 @@ func TestRefreshStopsAtBlockBoundaryWhenCancelled(t *testing.T) {
 	}
 }
 
-// A cancel that lands while the device is off the bus is not a failed
-// reattach: it is still the operator stopping the job, and the block that
-// dropped the bus is still the one to resume from.
+// A cancel that lands while the device is off the bus is still the operator
+// stopping the job. It must not be reported as a failed reattach, and the
+// block that dropped the bus is still the one to resume from.
 func TestRefreshCancelledDuringReattachIsStillACancel(t *testing.T) {
 	d := newFakeRefreshDev()
 	ctx, cancel := context.WithCancel(context.Background())

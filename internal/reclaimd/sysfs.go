@@ -25,9 +25,9 @@ func DefaultRoots() Roots { return Roots{Sys: "/sys", Proc: "/proc", Dev: "/dev"
 
 func (r Roots) Discover() ([]Presence, error) { return DiscoverUSBDisks(r) }
 
-// sectorSize is the unit of /sys/block/<x>/size. It is ALWAYS 512 regardless of
-// the device's logical_block_size -- multiplying by logical_block_size instead
-// is an 8x capacity overrun waiting for the first 4Kn enclosure.
+// sectorSize is the unit of /sys/block/<x>/size. It is always 512, whatever the
+// device's logical_block_size. Multiplying by logical_block_size instead would
+// be an 8x capacity overrun waiting for the first 4Kn enclosure.
 const sectorSize = 512
 
 func readSysString(path string) string {
@@ -51,7 +51,7 @@ func readSysInt(path string) int64 {
 }
 
 // resolveUSBParent walks up from a resolved <block>/device path until it finds
-// the USB device node -- the directory carrying idVendor/idProduct/serial.
+// the USB device node, the directory carrying idVendor/idProduct/serial.
 //
 // For a plain USB stick that is four levels up (LUN -> target -> host ->
 // interface -> device), but card readers and hubs change the depth, so the
@@ -68,9 +68,9 @@ func resolveUSBParent(devicePath, sysRoot string) string {
 			readSysString(filepath.Join(p, "serial")) != "" {
 			return p
 		}
-		// A device node without a serial is still the right level to stop at;
-		// detect it via uevent so that serial-less sticks are found too rather
-		// than walking past them into the host controller.
+		// A device node without a serial is still the right level to stop at,
+		// so detect it through uevent. Otherwise a serial-less stick would be
+		// walked past, up into the host controller.
 		if isUSBDeviceNode(p) {
 			return p
 		}
@@ -99,8 +99,8 @@ func isUSBDeviceNode(dir string) bool {
 //
 // It never opens a block device. That matters wherever USB devices are left at
 // power/control=auto, as a desktop udev rule may well do: opening the node
-// would wake the stick out of autosuspend on every poll, whereas reading sysfs
-// does not touch the bus at all.
+// would wake the stick out of autosuspend on every poll. Reading sysfs does not
+// touch the bus at all.
 func DiscoverUSBDisks(r Roots) ([]Presence, error) {
 	blockDir := filepath.Join(r.Sys, "block")
 	entries, err := os.ReadDir(blockDir)
@@ -111,7 +111,7 @@ func DiscoverUSBDisks(r Roots) ([]Presence, error) {
 	protected, err := protectedDevnos(r)
 	if err != nil {
 		// Failing to read mountinfo must not silently disable the guard that
-		// keeps us off the system disk, so this is fatal rather than ignored.
+		// keeps us off the system disk, so this is fatal.
 		return nil, fmt.Errorf("resolve protected devices: %w", err)
 	}
 
@@ -202,9 +202,9 @@ func parseDevno(s string) (int, int, error) {
 type devno struct{ major, minor int }
 
 // protectedDevnos returns the device numbers backing mount points we must never
-// scan. Comparing device NUMBERS rather than device paths is what makes this
-// reliable: mountinfo field 3 is authoritative and immune to the naming churn
-// that renames sda to sdb underneath us.
+// scan. It compares device numbers because mountinfo field 3 is authoritative
+// and immune to the naming churn that renames sda to sdb underneath us. A path
+// comparison would not be.
 func protectedDevnos(r Roots) (map[devno]bool, error) {
 	f, err := os.Open(filepath.Join(r.Proc, "self", "mountinfo"))
 	if err != nil {
@@ -324,10 +324,10 @@ func (r Roots) CheckNotInUse(p Presence) error {
 
 // IOStats reads /proc/diskstats, a procfs read that never touches the bus.
 //
-// It locates the row by device NUMBER, not by name. After a re-enumeration the
-// kernel name changes from sda to sdb, and a name-keyed lookup would quietly
-// start describing a different disk -- or the same disk under a stale name,
-// which is worse because it looks plausible.
+// It locates the row by device number. After a re-enumeration the kernel name
+// changes from sda to sdb, and a name-keyed lookup would quietly start
+// describing a different disk, or the same disk under a stale name, which is
+// worse because it looks plausible.
 func (r Roots) IOStats(p Presence) (diskStat, error) {
 	f, err := os.Open(filepath.Join(r.Proc, "diskstats"))
 	if err != nil {
@@ -357,7 +357,7 @@ func (r Roots) IOStats(p Presence) (diskStat, error) {
 	return diskStat{}, fmt.Errorf("no diskstats row for %d:%d", p.Major, p.Minor)
 }
 
-// Uptime reads /proc/uptime rather than comparing wall clocks, because on a
+// Uptime reads /proc/uptime. Comparing wall clocks would not do, because on a
 // router the wall clock at boot is fiction.
 func (r Roots) Uptime() (time.Duration, error) {
 	b, err := os.ReadFile(r.Proc + "/uptime")

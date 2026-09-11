@@ -42,9 +42,9 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 // The design intent is that none of these ever need to be set: the scanner
 // learns its own thresholds from the disk in front of it, and the scheduler
 // derives its own interval from what it finds. They are exposed anyway, with
-// the reasoning written down, because a number you cannot see is a number you
-// cannot argue with -- and the web UI shows the derived values next to these
-// defaults for exactly that reason.
+// the reasoning written down, so that every number can be seen and argued
+// with. The web UI shows the derived values next to these defaults for the
+// same reason.
 type Config struct {
 	// ---- deployment (the only settings that genuinely need a human) ----
 
@@ -56,7 +56,7 @@ type Config struct {
 
 	// StateDir must be on persistent storage. On OpenWrt /var is a symlink to
 	// /tmp, so the default below is a tmpfs there and the init script has to
-	// override it -- see the volatile-state warning in store.go.
+	// override it. See the volatile-state warning in store.go.
 	StateDir string `json:"state_dir"`
 
 	LogLevel string `json:"log_level"`
@@ -64,38 +64,38 @@ type Config struct {
 	// ---- adoption ----
 
 	// AdoptAfter keeps transient sticks out of the schedule. Something plugged
-	// in to copy a file is gone long before this elapses; something left in a
+	// in to copy a file is gone long before this elapses. Something left in a
 	// router is not.
 	AdoptAfter Duration `json:"adopt_after"`
 
 	// MinUptime stops the daemon scanning while the machine is still booting,
 	// when the stick has only just enumerated and everything else is competing
-	// for it. Measured on the kernel's uptime clock, never the wall clock.
+	// for it. It is measured on the kernel's uptime clock, not the wall clock.
 	MinUptime Duration `json:"min_uptime"`
 
 	// ---- read geometry ----
 
 	// BlockSize is zero by default, meaning it is derived per disk from that
-	// disk's max_sectors_kb -- see BlockSizeFor. One read must be exactly one
+	// disk's max_sectors_kb. See BlockSizeFor. One read must be exactly one
 	// SCSI command, or the latency recorded is the sum of several and the
 	// spikes this tool exists to detect get measured against a baseline that
-	// has grown by the same factor. The drive in the forensics reports 1 MiB;
-	// a USB 2.0 stick behind usb-storage reports 120 KiB, and hardcoding
+	// has grown by the same factor. The drive in the forensics reports 1 MiB.
+	// A USB 2.0 stick behind usb-storage reports 120 KiB, and hardcoding
 	// either one is wrong on the other.
 	BlockSize int `json:"block_size"`
 
 	// WarmupDiscard blocks are read and thrown away before timing starts. A
 	// stick left at power/control=auto with a short autosuspend delay pays a
 	// USB resume cost on the first read after an idle gap, which would
-	// otherwise be recorded as a slow block -- and poison the baseline it is
-	// meant to establish.
+	// otherwise be recorded as a slow block and poison the baseline the
+	// warm-up is meant to establish.
 	WarmupDiscard int `json:"warmup_discard_n"`
 	WarmupBlocks  int `json:"warmup_blocks_n"`
 
 	// ---- thresholds (multipliers on the disk's own learned p50) ----
 
 	// A fixed millisecond threshold would be wrong for every disk but one.
-	// Measured against a 10ms p50, these produce 50ms and 500ms -- which is
+	// Measured against a 10ms p50, these produce 50ms and 500ms, which is
 	// exactly where the forensics put the two interesting populations.
 	SlowFactor   float64  `json:"slow_factor"`
 	DangerFactor float64  `json:"danger_factor"`
@@ -114,8 +114,8 @@ type Config struct {
 
 	// SlowSkipSegments is 1, giving at least 32 MiB of clearance past a slow
 	// block. The precursor window measured in the forensics was 10 MiB, so this
-	// is roughly 3x safety margin -- and because the extreme blocks sit at the
-	// END of a segment anyway, the skip usually costs nothing.
+	// is roughly a 3x safety margin. Because the extreme blocks sit at the end
+	// of a segment anyway, the skip usually costs nothing.
 	SlowSkipSegments   int `json:"slow_skip_segments_n"`
 	DangerSkipSegments int `json:"danger_skip_segments_n"`
 
@@ -123,10 +123,10 @@ type Config struct {
 	DangerCooldown Duration `json:"danger_cooldown"`
 
 	// ReattachTimeout bounds how long a dropout waits for the stick to come
-	// back. Nothing resumes scanning afterwards -- the round is over either
-	// way -- so this is about recording the recovery, and on a mounted overlay
-	// about answering the only question that matters: did the backing store
-	// return at all. Measured re-enumeration is 5-6s; the rest is slack for a
+	// back. The round is over either way and nothing resumes scanning
+	// afterwards, so this is about recording the recovery, and on a mounted
+	// overlay about answering whether the backing store returned at all.
+	// Measured re-enumeration is 5-6s. The rest is slack for a
 	// SuperSpeed-to-HighSpeed renegotiation plus a second attempt.
 	ReattachTimeout Duration `json:"reattach_timeout"`
 
@@ -142,11 +142,11 @@ type Config struct {
 	ReprobeDelay  Duration `json:"reprobe_delay"`
 	ReprobeBudget Duration `json:"reprobe_budget"`
 
-	// ReprobeMax caps the re-probe at a measurement rather than a second
-	// sweep. Each entry costs five reads -- the block and two either side --
-	// and these are issued at the end of a round that just chose to back off,
-	// so the cap wants to be small enough that the check is never itself the
-	// thing that pushes the disk over.
+	// ReprobeMax caps the re-probe so it stays a measurement and does not grow
+	// into a second sweep. Each entry costs five reads, the block and two
+	// either side, and these are issued at the end of a round that just chose
+	// to back off, so the cap wants to be small enough that the check is never
+	// itself the thing that pushes the disk over.
 	ReprobeMax int `json:"reprobe_max_n"`
 
 	// ReprobeSpacing keeps the re-probe phase from becoming a burst of its own.
@@ -158,8 +158,8 @@ type Config struct {
 
 	// The control law is multiplicative because what it fights is
 	// multiplicative: a controller sliding into read-retry gets 50x slower, not
-	// 50ms slower. The dead band between the two thresholds is deliberate --
-	// without it the controller hunts.
+	// 50ms slower. The dead band between the two thresholds is deliberate.
+	// Without it the controller hunts.
 	DutyDriftHigh  float64  `json:"duty_drift_high"`
 	DutyDriftLow   float64  `json:"duty_drift_low"`
 	DutyUp         float64  `json:"duty_up"`
@@ -395,8 +395,8 @@ func envDur(key string, dst *Duration) {
 }
 
 // LoadConfigFromFile reads an optional JSON config, then applies defaults and
-// environment overrides. An empty path is not an error: the whole point is that
-// the daemon runs correctly with no configuration at all.
+// environment overrides. An empty path is not an error: the daemon is meant to
+// run correctly with no configuration at all.
 func LoadConfigFromFile(path string) (Config, error) {
 	var c Config
 	if path != "" {
@@ -416,7 +416,7 @@ func LoadConfigFromFile(path string) (Config, error) {
 func (c Config) validate() error {
 	// Zero means derive. A set value has to be a power of two, not merely a
 	// multiple of 4096: the latency map encodes the block size as a shift, so
-	// anything else is rejected only at the end of the first round -- after a
+	// anything else is rejected only at the end of the first round, after a
 	// full pass has already been spent measuring with it.
 	if c.BlockSize != 0 {
 		if c.BlockSize < 4096 || c.BlockSize > MaxBlockSize || c.BlockSize&(c.BlockSize-1) != 0 {
@@ -448,21 +448,21 @@ const MaxBlockSize = 1 << 20
 //
 // The kernel splits any read larger than max_sectors_kb into several SCSI
 // commands, so a block above that limit is timed as the sum of a handful of
-// device operations. That does not hide a spike -- the sum still contains it --
-// but it raises the disk's own p50 by the same factor, and the thresholds are
-// multiples of that p50. On a stick whose limit is 120 KiB, a 1 MiB block puts
-// the slow line at ~150ms instead of the floor of 50ms, and the 50ms population
-// that the whole tool was written to catch disappears under the threshold.
+// device operations. That does not hide a spike, since the sum still contains
+// it, but it raises the disk's own p50 by the same factor, and the thresholds
+// are multiples of that p50. On a stick whose limit is 120 KiB, a 1 MiB block
+// puts the slow line at ~150ms instead of the floor of 50ms, and the 50ms
+// population the tool was written to catch disappears under the threshold.
 //
-// So: the largest power of two that still fits in one command. Power of two
-// because the latency map stores the size as a shift, and the next size down
-// costs at most a factor of two in throughput per command -- cheap next to
-// measuring the wrong thing.
+// The result is the largest power of two that still fits in one command. Power
+// of two because the latency map stores the size as a shift, and the next size
+// down costs at most a factor of two in throughput per command, which is cheap
+// next to measuring the wrong thing.
 func (c Config) BlockSizeFor(id DiskIdentity) int {
 	if c.BlockSize > 0 {
 		return c.BlockSize
 	}
-	// An unknown limit is not a reason to read small; sysfs virtually always
+	// An unknown limit is not a reason to read small. sysfs virtually always
 	// has it, and the old fixed 1 MiB is the right guess when it does not.
 	if id.MaxSectorsKB <= 0 {
 		return MaxBlockSize
@@ -482,7 +482,7 @@ func (c Config) ForDisk(id DiskIdentity) Config {
 }
 
 // BlocksPerSegment is used everywhere the scanner reasons about the physical
-// layout; deriving it once keeps the mod-32 structure analysis honest. It is
+// layout. Deriving it once keeps the mod-32 structure analysis honest. It is
 // only meaningful on a config that has been through ForDisk.
 func (c Config) BlocksPerSegment() int {
 	if c.BlockSize <= 0 {

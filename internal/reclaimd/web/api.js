@@ -1,7 +1,7 @@
-/* Resolved from where this page is actually served, not hardcoded to the
-   root: on a router the status page usually ends up behind the nginx that is
-   already there, mounted under a prefix like /reclaimd/. An absolute '/api/v1'
-   would then be fetched from the proxy's root, which is somebody else's app. */
+/* Resolved from where this page is actually served. On a router the status
+   page usually ends up behind the nginx that is already there, mounted under a
+   prefix like /reclaimd/, and an absolute '/api/v1' would then be fetched from
+   the proxy's root, which is somebody else's app. */
 export const BASE = new URL('api/v1', document.baseURI).pathname;
 
 /* Completed passes are immutable, so their profiles are cached forever both by
@@ -63,13 +63,13 @@ export async function requestScan(key, iMeanIt = false) {
 }
 
 /* Ends the round running on one disk. The answer comes as soon as the round has
-   been told; the round itself ends a moment later, and says so with SCAN_END. */
+   been told. The round itself ends a moment later, and says so with SCAN_END. */
 export async function stopScan(key) {
   return post(`/disks/${encodeURIComponent(key)}/stop`, {});
 }
 
 /* Deletes everything the daemon has stored for one disk. The confirmation is
-   the UI's job; by the time this is called the decision has been made. */
+   the UI's job, so by the time this is called the decision has been made. */
 export async function forgetDisk(key) {
   return send('DELETE', `/disks/${encodeURIComponent(key)}`);
 }

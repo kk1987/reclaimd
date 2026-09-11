@@ -11,9 +11,9 @@ import (
 // tested at all: the failure it guards against is a router that needs its
 // filesystem repaired, and that is not something to discover in production.
 //
-// It models the one behaviour that makes this whole tool work -- reading a
-// degraded block hands the controller its reclaim trigger, so the block is
-// healthy on the next pass. That is what turns 110 dropouts into 10 and then 1.
+// It models the behaviour the tool depends on: reading a degraded block hands
+// the controller its reclaim trigger, so the block is healthy on the next pass.
+// That is what turns 110 dropouts into 10 and then 1.
 type fakeDisk struct {
 	size      int64
 	blockSize int
@@ -27,7 +27,7 @@ type fakeDisk struct {
 
 	reads    int
 	dropouts int
-	// present models the device leaving the bus: once it drops, every
+	// gone models the device leaving the bus: once it drops, every
 	// subsequent read fails until the caller acknowledges by reattaching.
 	gone bool
 }
@@ -105,7 +105,7 @@ func (c *cancellingDisk) ReadBlock(off int64) (time.Duration, error) {
 }
 
 // seedSuperblockTails degrades the last block of every Nth segment, which is
-// where 90.5% of the extreme-latency blocks actually landed in the forensics:
+// where 90.5% of the extreme-latency blocks landed in the forensics:
 // offset mod 32 MiB == 31, the last wordline of an erase block.
 func (f *fakeDisk) seedSuperblockTails(perSeg int, everyNth int, lat time.Duration) int {
 	n := 0
@@ -123,8 +123,8 @@ func (f *fakeDisk) seedSuperblockTails(perSeg int, everyNth int, lat time.Durati
 	return n
 }
 
-// fastConfig removes the real cooldowns so a test round takes milliseconds
-// rather than the hours a real one is deliberately spread over.
+// fastConfig removes the real cooldowns so a test round takes milliseconds.
+// A real one is deliberately spread over hours.
 func fastConfig(t *testing.T) Config {
 	t.Helper()
 	c := mustConfig(t)
@@ -154,19 +154,19 @@ func newTestScanner(t *testing.T, cfg Config) (*Scanner, *Store) {
 	return NewScanner(cfg, st, quietLogger(), DefaultRoots()), st
 }
 
-// TestConvergenceAcrossRounds is the headline test: repeated rounds must drive
-// slow blocks and dropouts monotonically toward zero, the way the real stick
-// went 1181 -> 258 -> 26 slow blocks and 110 -> 10 -> 1 dropouts.
+// TestConvergenceAcrossRounds checks that repeated rounds drive slow blocks
+// and dropouts monotonically toward zero, the way the real stick went
+// 1181 -> 258 -> 26 slow blocks and 110 -> 10 -> 1 dropouts.
 func TestConvergenceAcrossRounds(t *testing.T) {
 	cfg := fastConfig(t)
 	perSeg := cfg.BlocksPerSegment()
 	const blocks = 8192 // 8 GiB at 1 MiB blocks: 256 segments
 
 	disk := newFakeDisk(blocks, cfg.BlockSize, 10*time.Millisecond)
-	// Latency in the slow band, not the danger band. That matches the measured
-	// distribution -- of 1181 slow blocks only 347 were beyond 500ms -- and it
-	// matters here because a danger block trips the circuit breaker, which is a
-	// different code path with its own test.
+	// Latency in the slow band. That matches the measured distribution, where
+	// only 347 of the 1181 slow blocks were beyond 500ms, and it matters here
+	// because a danger block trips the circuit breaker, which is a different
+	// code path with its own test.
 	seeded := disk.seedSuperblockTails(perSeg, 3, 120*time.Millisecond)
 	if seeded == 0 {
 		t.Fatal("test seeded no degraded blocks")
@@ -324,8 +324,8 @@ func TestDropoutStopsRoundAndPersistsSuppression(t *testing.T) {
 		t.Errorf("dropouts = %d, want 1", res.Summary.Dropouts)
 	}
 
-	// The suppression must be on disk, not merely in memory: losing power a
-	// second after a dropout must not lose the window.
+	// The suppression must be on disk: losing power a second after a dropout
+	// must not lose the window.
 	prog, err := store.LoadProgress(key)
 	if err != nil {
 		t.Fatalf("progress was never persisted: %v", err)
@@ -381,8 +381,8 @@ func TestNearHangCircuitBreaker(t *testing.T) {
 	}
 }
 
-// An alignment mistake is our bug and must surface as one, not as a media error
-// blamed on the hardware for months.
+// An alignment mistake is our bug and must surface as one. Reported as a media
+// error, it would be blamed on the hardware for months.
 func TestAlignmentErrorIsFatal(t *testing.T) {
 	cfg := fastConfig(t)
 	disk := newFakeDisk(1024, cfg.BlockSize, 10*time.Millisecond)
@@ -447,8 +447,8 @@ func TestNextCursorStaysSegmentAligned(t *testing.T) {
 // one this reproduces ran for 3m18s against a 10 minute re-probe delay. The
 // re-probe used to step over every entry still inside its window and leave it
 // "for next round", so healed and still-slow came back zero on exactly the
-// disks the number exists to describe -- and the next round is an interval
-// away, resuming from a cursor well past these offsets.
+// disks the number exists to describe. The next round is an interval away and
+// resumes from a cursor well past these offsets.
 func TestShortRoundStillMeasuresHealing(t *testing.T) {
 	cfg := fastConfig(t)
 	// Non-zero, and longer than this round can possibly take.

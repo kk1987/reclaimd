@@ -295,8 +295,9 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 	srv.Build = reclaimd.BuildInfo{Version: version, Commit: commit, Date: buildDate}
 
 	if cfg.ListenAddr != "" && !isLoopback(cfg.ListenAddr) && cfg.UIToken == "" {
-		// An unauthenticated status page on a LAN interface must be a decision,
-		// never something that happens by leaving a default alone.
+		// An unauthenticated status page on a LAN interface has to be a
+		// deliberate choice. The warning is there so it cannot happen
+		// quietly by leaving a default alone.
 		logger.Warn("listening off-loopback without a ui_token; the status page "+
 			"is readable by anything on the network", "listen_addr", cfg.ListenAddr)
 	}
@@ -347,8 +348,8 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 	_ = reclaimd.NotifyStopping()
 	cancel()
 	close(stopPublisher)
-	// Before Shutdown, not after: it waits for connections to go idle, and an
-	// open event stream never does.
+	// This has to happen before Shutdown, which waits for connections to go
+	// idle. An open event stream never does.
 	srv.CloseStreams()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)

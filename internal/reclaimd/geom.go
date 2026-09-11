@@ -18,9 +18,9 @@ import (
 // device drives that bus, and the GEOM mesh says how big the disk is and what
 // is stacked on top of it. Reading them sends nothing to a device.
 //
-// Every kernel query is a field, so the joining -- the part that decides which
-// stick is which -- is tested on any machine, and platform_freebsd.go holds
-// only the queries themselves.
+// Every kernel query is a field, so the joining, the part that decides which
+// stick is which, is tested on any machine, and platform_freebsd.go holds only
+// the queries themselves.
 type freeBSD struct {
 	sysctl func(name string) ([]byte, error)
 	cam    func() ([]camDisk, error)
@@ -29,9 +29,9 @@ type freeBSD struct {
 	uptime func() (time.Duration, error)
 
 	// usbSim is the name umass(4) gives its CAM SIM. The SIM is registered
-	// under the unit number of the umass device itself -- umass.c passes
-	// sc_unit to cam_sim_alloc -- so umass-sim3 is dev.umass.3. It is a field
-	// so that a test can stand a CTL disk in for a stick.
+	// under the unit number of the umass device itself (umass.c passes sc_unit
+	// to cam_sim_alloc), so umass-sim3 is dev.umass.3. It is a field so that a
+	// test can stand a CTL disk in for a stick.
 	usbSim string
 }
 
@@ -224,7 +224,8 @@ func keyValues(s string) map[string]string {
 }
 
 // sernum is the one quoted value in %pnpinfo, and the only one that can hold a
-// space, so it is cut out by its delimiters rather than split on whitespace.
+// space, so it is cut out by its delimiters. Splitting on whitespace, which is
+// how the other fields are read, would break it up.
 func sernum(pnp string) string {
 	_, rest, ok := strings.Cut(pnp, `sernum="`)
 	if !ok {
@@ -240,11 +241,11 @@ func sernum(pnp string) string {
 // protectedDisks names the disks under the guarded mount points, however deep:
 // through a partition, a label, a mirror or an encryption layer.
 //
-// A ZFS mount names a dataset rather than a device, and which devices a pool is
-// built on is kept in its own labels, not anywhere GEOM shows. So zpool(8) is
-// asked -- but only when one of the USB disks carries a ZFS vdev at all.
-// Otherwise the answer cannot matter, and on a ZFS root, the default install,
-// asking would mean a zpool process on every discovery tick.
+// A ZFS mount names a dataset instead of a device, and the devices a pool is
+// built on are kept in the pool's own labels, which GEOM does not show. So
+// zpool(8) is asked, but only when one of the USB disks carries a ZFS vdev at
+// all. Otherwise the answer cannot matter, and on a ZFS root, the default
+// install, asking would mean a zpool process on every discovery tick.
 func (f freeBSD) protectedDisks(m *geomMesh, candidates []string) (map[string]bool, error) {
 	mps, err := f.mounts()
 	if err != nil {
@@ -330,8 +331,8 @@ func (f freeBSD) Alive(p Presence) bool {
 
 // geomLookThrough are the classes that republish what is under them and hold
 // it open only while something above them does: a partition table, a label.
-// DEV is a process with the node open -- the daemon itself while it scans --
-// which is no more a claim here than an open without O_EXCL is on Linux.
+// DEV is a process with the node open (the daemon itself while it scans), which
+// is no more a claim here than an open without O_EXCL is on Linux.
 var geomLookThrough = map[string]bool{"PART": true, "LABEL": true, "DEV": true}
 
 // CheckNotInUse walks the mesh upward from the disk looking for anything that
@@ -450,8 +451,8 @@ func cString(b []byte) string {
 	return string(b)
 }
 
-// geomMesh is kern.geom.confxml -- the whole GEOM graph as geom_dump.c writes
-// it -- indexed by provider name.
+// geomMesh is kern.geom.confxml, the whole GEOM graph as geom_dump.c writes it,
+// indexed by provider name.
 type geomMesh struct {
 	providers map[string]*gProvider
 }

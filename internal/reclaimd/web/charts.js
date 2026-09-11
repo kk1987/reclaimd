@@ -18,10 +18,10 @@ export function readPalette() {
   };
 }
 
-/* Worst of the bin, not the mean. A bin spans however many blocks the canvas
-   width leaves it, and a mean over that many ordinary reads pulls a single
-   near-hang down to something indistinguishable from the baseline -- while
-   that outlier is the entire reason the map exists. */
+/* Each bin keeps its worst value. A bin spans however many blocks the canvas
+   width leaves it, and a mean over that many ordinary reads would pull a
+   single near-hang down to something indistinguishable from the baseline.
+   That outlier is the entire reason the map exists. */
 export function downsampleMax(values, cols, baseMs) {
   const out = new Array(cols);
   const n = values.length;
@@ -97,15 +97,14 @@ export function drawStrip(canvas, prof, opts = {}) {
 }
 
 /* The healing waterfall: one row per pass, time downward, all rows in a single
-   canvas so they share one downsample and one colour scale. Comparing rows that
-   were sampled differently would be a lie told with a picture. */
+   canvas so they share one downsample and one colour scale. Rows that were
+   sampled differently would not compare honestly. */
 export function drawStack(canvas, profiles, opts = {}) {
   const pal = opts.palette || readPalette();
   const mode = opts.mode || 'abs';
   /* In diff mode every row is compared against one reference: the row above it
      ("prev") or the very first pass ("first"). Comparing against the first pass
-     is the one that shows the whole story at once -- a wall of red turning to a
-     wall of blue. */
+     shows the whole story at once, a wall of red turning to a wall of blue. */
   const refFor = (r) => mode === 'prev' ? profiles[r - 1] : profiles[0];
   const rowH = opts.rowH || 16, gap = 2;
   const dpr = window.devicePixelRatio || 1;
@@ -157,9 +156,9 @@ export function drawStack(canvas, profiles, opts = {}) {
 }
 
 /* Freshness: how long since this tool last read each segment.
-   The scale is keyed to the drive's own current interval rather than to
-   absolute days, so the map keeps reading as "are we behind schedule?" however
-   the schedule has adapted. */
+   The scale is keyed to the drive's own current interval instead of absolute
+   days, so the map keeps reading as "are we behind schedule?" however the
+   schedule has adapted. */
 export function drawFreshness(canvas, ages, intervalS, opts = {}) {
   const pal = opts.palette || readPalette();
   const dpr = window.devicePixelRatio || 1;
@@ -196,7 +195,7 @@ export function drawFreshness(canvas, ages, intervalS, opts = {}) {
   return counts;
 }
 
-/* Per-offset-within-superblock latency. This is the daemon showing that it has
+/* Per-offset-within-superblock latency, the evidence that the daemon has
    worked out the physical layout of the drive in front of it: on the reference
    stick 90.5% of the extreme blocks land on the last position, the final
    wordline of an erase block. */
@@ -265,7 +264,7 @@ export function findStubborn(profiles, blocksPerSegment, limit = 12) {
       }
       if (bad) streak++;
       else if (sawGood) break; // it read clean at some point, so it is not stuck
-      else break;              // only skips from here back; no evidence either way
+      else break;              // only skips from here back, no evidence either way
     }
     if (streak >= 2) {
       out.push({ seg, streak, offsetMiB: (seg * blocksPerSegment * newest.blockSize) / (1 << 20) });
@@ -292,9 +291,9 @@ export function svgDutyGauge(el, drift, threshold) {
   el.innerHTML = parts.join('');
 }
 
-/* Small multiples on a shared REAL-TIME axis. Plotting against pass number
+/* Small multiples on a shared real-time axis. Plotting against pass number
    would hide the thing most worth seeing: when the interval widens, the gaps
-   widen with it, and that is the adaptive policy visibly working. */
+   widen with it, which is the adaptive policy visibly working. */
 export function svgTrends(el, rounds) {
   if (!rounds.length) { el.innerHTML = ''; return; }
   const W = 720, H = 260, L = 46, R = 12, T = 14, B = 26;

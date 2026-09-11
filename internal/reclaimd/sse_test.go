@@ -34,9 +34,8 @@ func TestShutdownIsNotHeldOpenByAStream(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Read the hello so the handler is known to be parked in its select loop
-	// rather than still setting up, which would make this pass for the wrong
-	// reason.
+	// Read the hello so the handler is known to be parked in its select loop.
+	// If it were still setting up, this would pass for the wrong reason.
 	br := bufio.NewReader(resp.Body)
 	for i := 0; i < 2; i++ {
 		if _, err := br.ReadString('\n'); err != nil {
@@ -57,8 +56,8 @@ func TestShutdownIsNotHeldOpenByAStream(t *testing.T) {
 	}
 }
 
-// A request that arrives while the hub is closing must be refused a stream
-// rather than handed a channel nothing will ever close.
+// A request that arrives while the hub is closing must be refused a stream.
+// The alternative is a channel nothing will ever close.
 func TestClosedHubRefusesNewStreams(t *testing.T) {
 	hub := NewHub()
 

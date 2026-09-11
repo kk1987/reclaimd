@@ -42,8 +42,8 @@ type Progress struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-// Store owns the state directory. One instance per daemon; the flock makes that
-// a guarantee rather than a convention.
+// Store owns the state directory. There is one instance per daemon, and the
+// flock enforces that.
 type Store struct {
 	root   string
 	logger *slog.Logger
@@ -59,11 +59,12 @@ type Store struct {
 
 // OpenStore prepares the state directory and takes the process lock.
 //
-// The tmpfs check is not paranoia. On OpenWrt /var is a symlink to /tmp, so the
+// The tmpfs check is there for OpenWrt, where /var is a symlink to /tmp, so the
 // compiled-in default of /var/lib/reclaimd lands on a tmpfs that evaporates at
-// every reboot. The schedule and, far worse, the 24-hour dropout suppression
-// would silently reset forever, and the only symptom would be a daemon that
-// never quite seems to do its job.
+// every reboot. The schedule would reset at every boot, and so would the
+// 24-hour dropout suppression, which is worse. Neither reset would report
+// anything, and the only symptom would be a daemon that never quite seems to do
+// its job.
 func OpenStore(root string, logger *slog.Logger) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(root, "disks"), 0o700); err != nil {
 		return nil, fmt.Errorf("create state dir %s: %w", root, err)
@@ -136,10 +137,10 @@ func (s *Store) ensureDisk(key string) (string, error) {
 // Keys reach the store from HTTP path values. A wildcard matches a single path
 // segment, but an escaped slash inside it survives routing and unescapes
 // afterwards, so what arrives is text from the network on its way to a
-// filesystem path -- and DeleteDisk turns that into an rm -rf. Everything we
+// filesystem path, and DeleteDisk turns that path into an rm -rf. Everything we
 // generate comes out of sanitizeKey plus the ':' separating vendor from
-// product, and never starts with a dot, which is what rules out ".." without a
-// special case for it.
+// product, and never starts with a dot, which rules out ".." without a special
+// case for it.
 func validDiskKey(key string) bool {
 	if key == "" || len(key) > 255 || strings.HasPrefix(key, ".") {
 		return false
@@ -188,13 +189,13 @@ func (s *Store) DeleteDisk(key string) error {
 }
 
 // writeAtomic writes via a temp file in the same directory, fsyncs it, renames
-// it, and then fsyncs the PARENT DIRECTORY.
+// it, and then fsyncs the parent directory.
 //
-// That last step is the one everybody omits and the one that matters. rename is
-// atomic with respect to concurrent readers, but the directory entry is not
-// durable until the directory itself hits the medium. Skipping it is the
-// standard way to find a zero-length state file after a power cut -- and on a
-// router, losing power without warning is the normal case, not the exception.
+// The last step is the one that usually gets left out, and it matters. rename
+// is atomic with respect to concurrent readers, but the directory entry is not
+// durable until the directory itself hits the medium. Skipping the sync is the
+// usual way to find a zero-length state file after a power cut, and on a
+// router, losing power without warning is the normal case.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp := path + ".tmp"
@@ -247,7 +248,7 @@ func writeJSONAtomic(path string, v any) error {
 }
 
 // readJSON returns ErrNotFound for a missing file so callers can treat "never
-// written" as a normal first-run condition rather than an error.
+// written" as a normal first-run condition.
 func readJSON(path string, v any) error {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -321,10 +322,10 @@ func (s *Store) LoadProgress(key string) (Progress, error) {
 	return p, checkSchema(path, p.Schema)
 }
 
-// SaveProgress is the safety-critical write of the whole program. On the
-// dropout path it runs BEFORE logging and before anything else, so that losing
-// power one second later cannot lose the suppression window that keeps us from
-// walking straight back into the fault.
+// SaveProgress is the safety-critical write in the program. On the dropout path
+// it runs before logging and before anything else, so that losing power one
+// second later cannot lose the suppression window that keeps us from walking
+// straight back into the fault.
 func (s *Store) SaveProgress(key string, p Progress) error {
 	if _, err := s.ensureDisk(key); err != nil {
 		return err
@@ -463,7 +464,7 @@ func (s *Store) ListEvents(key string, limit int, beforeID uint64) ([]Event, err
 }
 
 // highestEventID recovers the counter after a restart so that event ids stay
-// monotonic across the daemon's lifetime -- the UI pairs healed events back to
+// monotonic across the daemon's lifetime. The UI pairs healed events back to
 // the defer that caused them by id, and reused ids would corrupt those links.
 func (s *Store) highestEventID() uint64 {
 	var maxID uint64
@@ -491,7 +492,7 @@ func (s *Store) highestEventID() uint64 {
 
 // SaveProfile writes the full-resolution map plus its coarse companion, then
 // prunes. Both are written once, at the end of a round: writing incrementally
-// during a scan would multiply this tool's wear on the very disk it protects.
+// during a scan would multiply this tool's wear on the disk it is protecting.
 func (s *Store) SaveProfile(key string, m *LatencyMap, blocksPerSegment, keepFull, keepCoarse int) error {
 	dir, err := s.ensureDisk(key)
 	if err != nil {
@@ -595,8 +596,8 @@ func seqOf(name string) uint64 {
 //
 // It is one uint32 of Unix seconds per segment: 1912 segments for the reference
 // stick, so 7.6 KiB rewritten once per pass. Segments the pass skipped keep
-// their old timestamp, which is the whole point -- the map is meant to show
-// what has NOT been refreshed lately.
+// their old timestamp, which is the point: the map is meant to show what has
+// not been refreshed lately.
 func (s *Store) SaveFreshness(key string, ages []uint32) error {
 	if _, err := s.ensureDisk(key); err != nil {
 		return err
@@ -625,7 +626,7 @@ func (s *Store) LoadFreshness(key string) ([]uint32, error) {
 }
 
 // ListDisks returns every key the store knows about, including ones not
-// currently plugged in -- their history is still worth showing.
+// currently plugged in, since their history is still worth showing.
 func (s *Store) ListDisks() ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(s.root, "disks"))
 	if err != nil {

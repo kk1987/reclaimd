@@ -10,7 +10,7 @@ import (
 //
 // The MX4300 boots with a wall clock somewhere in 1970 until NTP lands, and an
 // absolute next_scan_at compared against that clock either fires instantly and
-// forever, or never fires at all. Neither failure announces itself; the daemon
+// forever, or never fires at all. Neither failure announces itself. The daemon
 // simply behaves wrongly until somebody goes looking.
 var SanityEpoch = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -29,7 +29,7 @@ type Schedule struct {
 	RoundSeq         uint64    `json:"round_seq"`
 
 	// LastReason is the code the UI renders to explain the current interval.
-	// The daemon never produces a sentence; the browser turns this plus
+	// The daemon never produces a sentence. The browser turns this plus
 	// LastReasonParams into one, in whichever language is selected.
 	LastReason       string         `json:"last_reason,omitempty"`
 	LastReasonParams map[string]any `json:"last_reason_params,omitempty"`
@@ -49,10 +49,10 @@ const (
 
 // NewSchedule starts a freshly adopted disk.
 //
-// The first pass is scheduled immediately rather than one interval out. A disk
-// with no history has no baseline, no map and no verdict -- everything this
-// tool says about it would be "unknown" for a week. Adoption already waited out
-// its probation, so there is nothing left to be cautious about.
+// The first pass is scheduled immediately instead of one interval out. A disk
+// with no history has no baseline, no map and no verdict, so everything this
+// tool said about it would be "unknown" for a week. Adoption already waited
+// out its probation, so there is nothing left to be cautious about.
 func NewSchedule(cfg Config, now time.Time) Schedule {
 	return Schedule{
 		Schema:     stateSchema,
@@ -67,11 +67,11 @@ func NewSchedule(cfg Config, now time.Time) Schedule {
 
 // Next applies the multiplicative policy after a round.
 //
-// Multiplicative rather than additive because what it is tracking is a rate of
-// decay, not a fixed budget: a disk that needs attention twice as often needs
-// the interval halved, not shortened by a day. The clamp floor keeps a sick
-// disk from being scanned into the ground; the ceiling keeps a healthy one from
-// aging past the retention window this whole tool exists to defend.
+// The policy is multiplicative because what it tracks is a rate of decay: a
+// disk that needs attention twice as often needs the interval halved, not
+// shortened by a day. The clamp floor keeps a sick disk from being scanned
+// into the ground. The ceiling keeps a healthy one from aging past the
+// retention window this tool exists to defend.
 func (s Schedule) Next(sum RoundSummary, now time.Time, cfg Config) Schedule {
 	outcome := sum.Outcome
 	prev := s.Interval.Duration()
@@ -149,8 +149,8 @@ func (s Schedule) Next(sum RoundSummary, now time.Time, cfg Config) Schedule {
 
 	// The interval is a full-pass cadence: how long a whole disk may go
 	// unread. A round that stopped on its circuit breaker did not deliver a
-	// full pass -- the one that prompted this covered 8.6% and left a cursor
-	// mid-disk -- and waiting a full interval to resume applies a whole-disk
+	// full pass (the one that prompted this covered 8.6% and left a cursor
+	// mid-disk), and waiting a full interval to resume applies a whole-disk
 	// answer to a fraction of a disk. Come back at the floor instead, which is
 	// the documented answer to "how often is too often for a sick disk", and
 	// never before the suppression window that the same round just set.
@@ -171,8 +171,8 @@ func (s Schedule) Next(sum RoundSummary, now time.Time, cfg Config) Schedule {
 }
 
 // coveredPct is how much of the disk the round actually read, for the line the
-// UI shows next to a resume. Rounded to one place: this is an explanation, not
-// a measurement anything depends on.
+// UI shows next to a resume. Rounded to one place: it is only an explanation,
+// and nothing depends on the exact value.
 func coveredPct(sum RoundSummary) float64 {
 	if sum.BlocksTotal <= 0 {
 		return 0
@@ -191,8 +191,8 @@ func (s Schedule) Postpone(now time.Time) Schedule {
 	return s
 }
 
-// WhatIf is what the UI shows to make the policy arguable rather than magical:
-// the three intervals the next round could produce, given today's value.
+// WhatIf is what the UI shows so that the policy can be argued with: the three
+// intervals the next round could produce, given today's value.
 func (s Schedule) WhatIf(cfg Config) map[string]any {
 	clampf := func(d time.Duration) float64 {
 		if d < cfg.ScanIntervalMin.Duration() {
@@ -226,11 +226,11 @@ func (s Schedule) Due(now time.Time) (bool, string) {
 //
 // Two symptoms are handled: an absolute timestamp far in the future (written
 // before NTP, when "now" was 1970) and a LastRoundAt in the future (the clock
-// went backwards). Both are fixed the same way -- discard the absolute value
+// went backwards). Both are fixed the same way: discard the absolute value
 // and re-derive it from the interval, which is the part that is still valid.
 func (s Schedule) RebaseIfClockUnsynced(now time.Time) (Schedule, bool) {
 	if now.Before(SanityEpoch) {
-		return s, false // caller must wait for NTP; nothing sane to compute yet
+		return s, false // caller must wait for NTP, nothing sane to compute yet
 	}
 	needsRebase := s.NextScanAt.After(now.Add(s.Interval.Duration()+24*time.Hour)) ||
 		s.LastRoundAt.After(now)

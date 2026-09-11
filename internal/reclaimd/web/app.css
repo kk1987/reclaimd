@@ -3,19 +3,19 @@
    No web fonts are loaded: this runs on a router that may have no route to the
    internet, and the CJK fallbacks below are all locally installed faces. */
 :root{
-  /* The page's own theme, not the system's, decides how the browser draws its
-     native parts. Declaring "light dark" left that to the system, so a dark
-     desktop put a dark scrollbar under the disk cards on the light page. */
+  /* The page's own theme decides how the browser draws its native parts.
+     Declaring "light dark" left that to the system, so a dark desktop put a
+     dark scrollbar under the disk cards on the light page. */
   color-scheme:light;
-  /* Light by default. Contrast ratios below were measured, not eyeballed:
-     every text colour clears 4.5:1 on its own ground, and the heat ramp is
-     monotonically darker at every step so severity survives greyscale and
-     colour blindness. */
+  /* Light by default. The contrast ratios below were measured: every text
+     colour clears 4.5:1 on its own ground, and the heat ramp is monotonically
+     darker at every step, so severity survives greyscale and colour
+     blindness. */
   --bg:#f4f7f7; --surface:#ffffff; --surface-2:#e9eeee; --sunk:#eef2f2;
   --line:#d7e0e0; --line-2:#bcc9c9;
   --ink:#111819;            /* 17.97:1 on white */
   --ink-2:#3c4a4d;          /*  9.22:1 */
-  --ink-3:#5c6a6e;          /*  5.61:1 -- carries every caption, axis and
+  --ink-3:#5c6a6e;          /*  5.61:1. Carries every caption, axis and
                                  legend, so it is the one that most needed
                                  fixing: the previous value sat at 4.17:1 */
   --accent:#0b6b70;         /*  6.27:1 */ --accent-ink:#08585c;
@@ -33,22 +33,23 @@
      must never be mistakable for a healthy one. */
   --heat-skip:#9ea7a7;
 
-  /* Diverging ramp for the waterfall's diff modes; the neutral matches --sunk
-     so masked cells recede rather than compete. */
+  /* Diverging ramp for the waterfall's diff modes. The neutral matches --sunk
+     so masked cells recede. */
   --diff-better-2:#0b6b70; --diff-better-1:#7fb3b6; --diff-same:#eef2f2;
   --diff-worse-1:#e0a020; --diff-worse-2:#a11d1d;
 
-  /* Freshness, keyed to the drive's own interval rather than absolute days. */
+  /* Freshness, keyed to the drive's own interval instead of absolute days. */
   --fresh-0:#d9eaea; --fresh-1:#b3d6d8; --fresh-2:#e0a020; --fresh-3:#a11d1d;
 
   /* Measured versus inferred, carried over from the existing reports: a
      derived number must never pass for an observed one. */
   --measured:#0b6b70; --est:#8a5d06;
 
-  /* Latin faces come before the CJK ones, and not only Plex: where Plex is not
-     installed a CJK face took over the English text and set its punctuation
-     full width, so "drive’s" had a character-wide gap in it. Chinese still
-     falls through to the CJK faces, the only ones here that carry it. */
+  /* All the Latin faces come before the CJK ones, the fallbacks as well as
+     Plex: where Plex is not installed a CJK face took over the English text
+     and set its punctuation full width, so "drive’s" had a character-wide gap
+     in it. Chinese still falls through to the CJK faces, the only ones here
+     that carry it. */
   --sans:"IBM Plex Sans",-apple-system,"Segoe UI","Noto Sans",Roboto,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
   --cond:"IBM Plex Sans Condensed","IBM Plex Sans",-apple-system,"Segoe UI","Noto Sans",Roboto,"Helvetica Neue",Arial,"PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -57,8 +58,8 @@
   --shadow:0 1px 2px rgba(17,24,25,.05),0 6px 20px -14px rgba(17,24,25,.28);
 }
 
-/* Dark is opt-in via the toggle rather than automatic. Flip this selector to
-   also cover @media (prefers-color-scheme:dark){:root:not([data-theme="light"])}
+/* Dark is opt-in via the toggle. Flip this selector to also cover
+   @media (prefers-color-scheme:dark){:root:not([data-theme="light"])}
    if you would rather it follow the system again. */
 :root[data-theme="dark"]{
   color-scheme:dark;
@@ -79,9 +80,9 @@
 }
 
 *{box-sizing:border-box}
-/* The UA stylesheet's [hidden]{display:none} loses to ANY author rule that sets
+/* The UA stylesheet's [hidden]{display:none} loses to any author rule that sets
    display, and .card sets display:flex. Without this every section the script
-   hides -- the live panel, the waterfall, trends -- renders anyway as an empty
+   hides (the live panel, the waterfall, trends) renders anyway as an empty
    heading. Author styles beat the UA sheet regardless of specificity, so this
    has to be stated here. */
 [hidden]{display:none!important}
@@ -104,7 +105,7 @@ p{margin:0}
 .skip{position:absolute;left:-9999px}
 .skip:focus{left:8px;top:8px;background:var(--surface);padding:8px;z-index:9}
 
-/* The bar runs edge to edge; what is in it sits on the page's column, so the
+/* The bar runs edge to edge. What is in it sits on the page's column, so the
    brand lines up with the left edge of the cards below and the controls with
    their right edge, instead of drifting to the viewport's corners on a wide
    screen. Below --maxw the two paddings are the same 20px. */
@@ -128,11 +129,11 @@ p{margin:0}
 :root[data-theme="dark"] .seg button[aria-pressed="true"]{color:#04191f}
 .iconbtn{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);
   color:var(--ink-2);cursor:pointer;font-size:14px;padding:3px 9px}
-/* A control with nothing to do says so by looking like it, not by doing
-   nothing when pressed. */
+/* A control with nothing to do looks like it, so nobody has to press it to
+   find out. */
 .iconbtn:disabled{opacity:.35;cursor:default}
-/* The one button that destroys something says so before it is pressed, not
-   only in the dialog it opens. */
+/* The one button that destroys something says so before it is pressed, as
+   well as in the dialog it opens. */
 .iconbtn[data-forget]:hover:not(:disabled){color:var(--bad);border-color:var(--bad)}
 .conn{width:9px;height:9px;border-radius:50%;background:var(--ink-3);display:inline-block}
 .conn[data-state="live"]{background:var(--ok)}
@@ -249,15 +250,15 @@ canvas.thin{width:100%;height:22px;display:block;background:var(--sunk);border-r
 .empty{color:var(--ink-3);font-size:13px;padding:8px 2px}
 
 /* rewrite: a command to copy, never a button that runs one. The page cannot
-   reach refresh and is not trying to -- see the gates in README. */
+   reach refresh and is not trying to. See the gates in README. */
 .cmdrow{display:flex;gap:8px;align-items:stretch;margin-top:10px}
 .cmdrow .lbl{font-size:12px;color:var(--ink-3);margin-bottom:4px}
 .cmdrow>div{flex:1;min-width:0}
-/* The command wraps rather than scrolls. A scrolling box keeps the page from
-   widening but hides the tail of the very thing the reader is here to check --
-   on a phone it hid everything past the key. A command line has no column
-   meaning to preserve, so it may break anywhere; user-select:all still takes
-   the whole command when the clipboard API is unavailable. */
+/* The command wraps. A scrolling box keeps the page from widening but hides
+   the tail of the very thing the reader is here to check, and on a phone it
+   hid everything past the key. A command line has no column meaning to
+   preserve, so it may break anywhere. user-select:all still takes the whole
+   command when the clipboard API is unavailable. */
 .cmd{font-family:var(--mono);font-size:12px;color:var(--ink-2);background:var(--sunk);
   border:1px solid var(--line);border-radius:3px;padding:8px 10px;line-height:1.5;
   white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;

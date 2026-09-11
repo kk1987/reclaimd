@@ -9,7 +9,7 @@ import (
 )
 
 // maxSSEClients bounds the memory a forgotten browser tab can cost. Each client
-// is one goroutine plus a small buffer, so eight is a few tens of kilobytes --
+// is one goroutine plus a small buffer, so eight is a few tens of kilobytes,
 // which matters on a router sharing its RAM with the thing it routes for.
 const maxSSEClients = 8
 
@@ -27,8 +27,8 @@ type Frame struct {
 // Hub fans frames out to connected browsers.
 //
 // The coalescing that keeps a 100-events-per-second scanner from flooding a
-// 2 Hz UI happens in the publisher, not here: progress frames are idempotent
-// snapshots, so the newest one is always the only one worth sending.
+// 2 Hz UI happens in the publisher, and none of it here. Progress frames are
+// idempotent snapshots, so the newest one is always the only one worth sending.
 type Hub struct {
 	mu      sync.Mutex
 	clients map[chan Frame]struct{}
@@ -74,8 +74,8 @@ func (h *Hub) Subscribe(lastID uint64) (<-chan Frame, func(), bool) {
 // Publish delivers a frame, dropping progress frames under backpressure.
 //
 // A progress frame is a full snapshot, so discarding a stale one loses nothing.
-// Events and lifecycle changes are not droppable -- a missed dropout would
-// leave the UI quietly wrong -- so a client that cannot keep up with those gets
+// Events and lifecycle changes are not droppable, because a missed dropout
+// would leave the UI quietly wrong. A client that cannot keep up with those is
 // told to resynchronise instead.
 func (h *Hub) Publish(event string, payload any) {
 	b, err := json.Marshal(payload)
@@ -122,8 +122,8 @@ func (h *Hub) Publish(event string, payload any) {
 // duration. Closing the client channels makes each stream return at once, and
 // EventSource reconnects by itself as soon as the new process is listening.
 //
-// After this the hub stays closed: a request that arrives mid-shutdown is
-// refused a stream rather than handed one nothing will ever close.
+// After this the hub stays closed. A request that arrives mid-shutdown is
+// refused a stream, since nothing would ever close one handed out now.
 func (h *Hub) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()

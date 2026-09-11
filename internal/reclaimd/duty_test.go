@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// A drive whose steady-state latency simply sits above its cold opening
-// baseline must not be throttled into the ground.
+// A drive whose steady-state latency sits above its cold opening baseline must
+// not be throttled harder and harder for the difference.
 //
 // This is what a real full pass did: baseline learned cold at 7.58 ms, the rest
 // of the drive reading at about 10 ms, drift pinned at 1.33 and never dropping
@@ -44,8 +44,8 @@ func TestDutyDoesNotWindUpOnSteadyStateOffset(t *testing.T) {
 	}
 }
 
-// The controller still has to react to a real excursion -- a drive heating up,
-// or a sweep entering a degraded region -- which is the entire reason it exists.
+// The controller still has to react to a real excursion, a drive heating up or
+// a sweep entering a degraded region. That is what it is for.
 func TestDutyStillBacksOffOnRealDrift(t *testing.T) {
 	cfg := mustConfig(t)
 	c := NewDutyController(cfg)
@@ -96,10 +96,10 @@ func TestDutyRelaxesWhenLatencyRecovers(t *testing.T) {
 
 // The throughput ceiling has to hold on a disk faster than it. It used to be
 // compared with the rest already owed instead of added to it, and at the
-// default 60 MB/s a 1 MiB block falls 17ms short of the pace -- under the 20ms
-// worth a sleep -- so it never came due: a CTL ramdisk went through 512 MiB in
-// a third of a second. The second ceiling's pace is longer than DutyMaxSleep,
-// which must not cut it short either.
+// default 60 MB/s a 1 MiB block falls 17ms short of the pace. That is under
+// the 20ms worth a sleep, so it never came due: a CTL ramdisk went through
+// 512 MiB in a third of a second. The second ceiling's pace is longer than
+// DutyMaxSleep, which must not cut it short either.
 func TestDutyCeilingHoldsOnAFastDisk(t *testing.T) {
 	for _, mbps := range []float64{60, 2} {
 		cfg := mustConfig(t)

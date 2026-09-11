@@ -36,9 +36,9 @@ const (
 // program cycle.
 //
 // Reading is enough to trigger reclaim on the blocks the controller decides are
-// marginal; rewriting is the bigger hammer, and it refreshes everything whether
-// the controller agrees or not. That is why it is a separate command behind
-// four gates rather than something the daemon may decide to do.
+// marginal. Rewriting is the bigger hammer: it refreshes everything whether the
+// controller agrees or not. That is why it is a separate command behind four
+// gates, and why the daemon never does it on its own.
 func Refresh(ctx context.Context, cfg Config, pl Platform, logger *slog.Logger, opts RefreshOpts) error {
 	if opts.Mode == "" {
 		opts.Mode = RefreshRewrite
@@ -64,14 +64,13 @@ func Refresh(ctx context.Context, cfg Config, pl Platform, logger *slog.Logger, 
 		return fmt.Errorf("%w: %s", ErrNotFound, opts.Key)
 	}
 
-	// Gate 1. Not a --yes flag: a confirmation you can paste from the wrong
-	// terminal is not a confirmation. The serial has to come from having looked
-	// at the device that is about to be overwritten.
+	// Gate 1. A --yes flag would not do, because a confirmation you can paste
+	// from the wrong terminal confirms nothing. The serial has to come from
+	// having looked at the device that is about to be overwritten.
 	if opts.Confirm != p.Identity.Serial || p.Identity.Serial == "" {
-		// The serial is deliberately NOT echoed here. Printing it would let the
+		// The serial is deliberately not echoed here. Printing it would let the
 		// operator copy it straight out of the error message, which defeats the
-		// only thing this gate is for: making them look at the device that is
-		// about to be overwritten.
+		// point of the gate.
 		return fmt.Errorf("%w: -confirm must be the serial number printed on the "+
 			"target device (%s at %s)", ErrConfirmMismatch, p.Identity.Model, p.Node)
 	}
@@ -102,7 +101,7 @@ func Refresh(ctx context.Context, cfg Config, pl Platform, logger *slog.Logger, 
 
 	// Gate 3. An open the kernel itself refuses while the disk is in use, which
 	// upgrades gate 2 from a check with a race window into a guarantee. How
-	// much of gate 2 each kernel enforces is written at refreshOpenFlags.
+	// much of gate 2 each kernel enforces is documented at refreshOpenFlags.
 	f, err := os.OpenFile(p.Node, refreshOpenFlags, 0)
 	if err != nil {
 		return fmt.Errorf("open %s exclusively (is it mounted?): %w", p.Node, err)
@@ -159,9 +158,9 @@ func Refresh(ctx context.Context, cfg Config, pl Platform, logger *slog.Logger, 
 //
 // A dropout in the middle of a whole-drive rewrite cannot be staged against
 // real hardware, and it is the one path where getting the recovery wrong leaves
-// a drive half-rewritten -- worse than either finishing or never starting. So
-// the loop talks to an interface and the test supplies a device that fails
-// where it likes.
+// a drive half-rewritten, which is worse than either finishing or never
+// starting. So the loop talks to an interface and the test supplies a device
+// that fails where it likes.
 type refreshTarget interface {
 	ReadAt(p []byte, off int64) (int, error)
 	WriteAt(p []byte, off int64) (int, error)
@@ -207,10 +206,9 @@ func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
 				if isDisconnect(err, alive) {
 					goto dropped
 				}
-				// Gate 4, and the most important line in this file. Writing back
-				// a buffer we failed to fill would turn a recoverable retention
-				// problem into permanent data loss -- the single outcome this
-				// whole program exists to prevent.
+				// Gate 4. Writing back a buffer we failed to fill would turn a
+				// recoverable retention problem into permanent data loss, which
+				// is the one outcome this whole program exists to prevent.
 				logger.Warn("read failed; leaving this block untouched",
 					"offset", off, "error", err)
 				st.Skipped++
@@ -255,9 +253,8 @@ func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
 		}
 		tgt = next
 		logger.Info("resuming refresh", "offset", off)
-		// Retry the block that dropped us rather than skipping it: the write
-		// never landed, so skipping it would leave a hole in the very refresh
-		// being performed.
+		// Retry the block that dropped us. The write never landed, so skipping
+		// it would leave a hole in the refresh.
 		off -= blockSize
 	}
 
@@ -274,10 +271,9 @@ func rewriteRange(ctx context.Context, logger *slog.Logger, tgt refreshTarget,
 // ENODEV and ENXIO are unambiguous. EIO is not: it covers both a vanished
 // device and a single sector that will not read, and the two need opposite
 // responses. Treating every EIO as a dropout means one bad sector burns the
-// whole dropout budget -- close, reattach, retry the same block, fail again --
-// and aborts a refresh that should simply have stepped over it. So EIO asks
-// the platform, which answers without touching the bus, exactly as the
-// scanner does.
+// whole dropout budget (close, reattach, retry the same block, fail again) and
+// aborts a refresh that should simply have stepped over it. So EIO asks the
+// platform, which answers without touching the bus. The scanner does the same.
 func isDisconnect(err error, alive func() bool) bool {
 	switch {
 	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ENXIO):

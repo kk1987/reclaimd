@@ -42,7 +42,7 @@ const scanOpenFlags = os.O_RDONLY | syscall.O_CLOEXEC
 
 // refreshOpenFlags has no O_EXCL, because GEOM ignores it: g_dev_open() keeps
 // it under #ifdef notyet. What refuses the open instead is GEOM's access rule,
-// which denies a writer while anything else holds the disk exclusively -- as a
+// which denies a writer while anything else holds the disk exclusively. A
 // read-write mount, swap on a partition and a ZFS vdev all do, handed down
 // through the partition table. A read-only mount holds nothing exclusively, so
 // against that one CheckNotInUse is the only gate.
@@ -126,7 +126,7 @@ func sysctl(mib []int32, old *byte, oldlen *uintptr) error {
 // CAM's ioctl ABI at CAM_VERSION 0x1a, from cam_ccb.h and scsi_all.h on
 // FreeBSD 15.1, the same on amd64 and arm64. The request number carries
 // sizeof(union ccb), so a kernel with a different layout refuses the request
-// with ENOTTY rather than reading the buffer wrong.
+// with ENOTTY before it can read the buffer wrong.
 const (
 	camIOCommand = 0xc4e01a02 // CAMIOCOMMAND
 	ccbSize      = 1248       // sizeof(union ccb)
@@ -168,7 +168,7 @@ const (
 
 // camDisks reads CAM's device table with XPT_DEV_MATCH, as camcontrol devlist
 // does, and asks each disk's SIM for its transfer limit with XPT_PATH_INQ.
-// Both answer from what the kernel already holds; neither reaches a device.
+// Both answer from what the kernel already holds, and neither reaches a device.
 // /dev/xpt0 belongs to root alone, and so, on FreeBSD, does discovery.
 func camDisks() ([]camDisk, error) {
 	// xptopen() refuses anything but read-write.

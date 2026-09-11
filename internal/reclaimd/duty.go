@@ -12,10 +12,10 @@ import (
 // to 12ms as it heats. There is no temperature sensor to read, and this signal
 // is free.
 //
-// Honest caveat, which the UI prints next to the gauge: the same signal rises
-// when the sweep enters a degraded region, so "hot" and "struggling" cannot be
-// told apart here. Both warrant slowing down, so conflating them is harmless --
-// but it is a conflation, not a measurement of temperature.
+// One caveat, which the UI prints next to the gauge: the same signal rises when
+// the sweep enters a degraded region, so "hot" and "struggling" cannot be told
+// apart here. Both warrant slowing down, so conflating them is harmless, but
+// the number is not a temperature.
 //
 // The control law is multiplicative because what it fights is multiplicative: a
 // controller sliding into read-retry gets 50x slower, not 50ms slower. An
@@ -25,33 +25,32 @@ type DutyController struct {
 	cfg      Config
 	factor   float64
 	debt     time.Duration
-	paceDebt time.Duration // owed to the throughput ceiling; see Pay
+	paceDebt time.Duration // owed to the throughput ceiling (see Pay)
 	state    string
 	drift    float64
 	restFor  time.Duration
 
-	// ref is this controller's OWN reference, and it is deliberately not the
+	// ref is this controller's own reference. It is deliberately not the
 	// frozen threshold baseline.
 	//
 	// That baseline is learned cold, on the first few hundred blocks, and
 	// freezing it is right for deciding what counts as a slow block. It is
 	// wrong here. Reading heats the drive, so its steady-state latency is
-	// simply higher than its cold-start latency -- on the drive under test,
-	// 10 ms against a 7.6 ms opening. A controller told to chase the cold
-	// number can never reach it however long it rests, so it rests harder
-	// forever: a measured full pass fell from 99 MiB/s to 16 MiB/s and stayed
-	// there, turning a ten-minute scan into sixty-three.
+	// higher than its cold-start latency: on the drive under test, 10 ms
+	// against a 7.6 ms opening. A controller told to chase the cold number can
+	// never reach it however long it rests, so it rests harder forever. A
+	// measured full pass fell from 99 MiB/s to 16 MiB/s and stayed there,
+	// turning a ten-minute scan into sixty-three.
 	//
 	// So the reference is taken once the loop has settled, and drift is
-	// measured against the drive running warm rather than against the drive
-	// standing still.
+	// measured against the drive running warm.
 	ref      time.Duration
 	evals    int
 	ups      int
 	lastRoll time.Duration
 
-	// sleep is sleepCtx, and a field only so a test can add up the rest
-	// instead of taking it.
+	// sleep is sleepCtx. It is a field so a test can add up the rest without
+	// actually sleeping.
 	sleep func(context.Context, time.Duration) error
 }
 
@@ -61,12 +60,12 @@ type DutyController struct {
 const settleEvals = 8
 
 // maxFruitlessUps bounds the integral term. If resting this many times running
-// has not brought the rolling latency down, resting is not the remedy: what is
-// being measured is where the drive simply is slower, not a device getting hot.
-// Without this the factor ratchets to its clamp and stays there.
+// has not brought the rolling latency down, resting is not the remedy: the
+// sweep is in a region where the drive is simply slower, and heat is not the
+// cause. Without this the factor ratchets to its clamp and stays there.
 const maxFruitlessUps = 6
 
-// Duty states, reported to the UI as codes rather than sentences.
+// Duty states, reported to the UI as codes.
 const (
 	DutyRunning = "RUNNING"
 	DutyResting = "RESTING"
@@ -85,9 +84,9 @@ func (c *DutyController) Factor() float64 { return c.factor }
 func (c *DutyController) Drift() float64  { return c.drift }
 func (c *DutyController) State() string   { return c.state }
 
-// Evaluate adjusts the rest factor. It is called every DutyEvalEvery blocks
-// rather than every block: evaluating continuously makes the loop hunt, because
-// each correction changes the very timing that produced the measurement.
+// Evaluate adjusts the rest factor. It is called every DutyEvalEvery blocks.
+// Evaluating on every block makes the loop hunt, because each correction
+// changes the timing that produced the measurement.
 func (c *DutyController) Evaluate(rolling, baseline time.Duration) {
 	if baseline <= 0 || rolling <= 0 {
 		return
@@ -111,7 +110,7 @@ func (c *DutyController) Evaluate(rolling, baseline time.Duration) {
 
 	switch {
 	case c.drift > c.cfg.DutyDriftHigh:
-		// Anti-windup. Resting is only worth doing while it is working; when
+		// Anti-windup. Resting is only worth doing while it is working. When
 		// it is not, the drift is telling us about the drive's own variation
 		// across its address space, which no amount of waiting will change.
 		if c.ups >= maxFruitlessUps && !improved {
@@ -143,23 +142,24 @@ func (c *DutyController) Evaluate(rolling, baseline time.Duration) {
 //
 // Sub-millisecond sleeps do not survive the scheduler: asking for 400us costs
 // more in wakeup overhead than it buys in rest, and gets rounded up anyway.
-// Batching into 20ms chunks is what makes the requested duty cycle the one
-// actually delivered.
+// Batching into 20ms chunks makes the delivered duty cycle match the requested
+// one.
 //
 // The throughput ceiling keeps a debt of its own because the two are settled
-// differently: the controller's rest is capped at DutyMaxSleep a sleep, the
-// ceiling's is paid in full, or a pace longer than that cap would leak. One
-// sleep covers both, so it lasts as long as the larger of the two.
+// differently: the controller's rest is capped at DutyMaxSleep per sleep, and
+// the ceiling's is paid in full, because a pace longer than that cap would
+// otherwise leak. One sleep covers both, so it lasts as long as the larger of
+// the two.
 func (c *DutyController) Pay(ctx context.Context, last time.Duration) error {
 	c.debt += time.Duration(c.factor * float64(last))
 
 	// A hard ceiling independent of the drift signal, so a live overlay keeps
 	// headroom no matter what the controller concludes. What each block falls
-	// short of the pace is added up rather than compared with the debt, since a
-	// shortfall under DutyMinSleep -- at the default 60 MB/s and 1 MiB, every
-	// one -- would otherwise never come due. A read slower than the pace pays
-	// down what earlier ones owed but banks nothing, so a slow stretch cannot
-	// buy a burst after it.
+	// short of the pace is added up, since a single shortfall under
+	// DutyMinSleep (at the default 60 MB/s and 1 MiB, every one of them) would
+	// never come due on its own. A read slower than the pace pays down what
+	// earlier ones owed but banks nothing, so a slow stretch cannot buy a
+	// burst after it.
 	if c.cfg.MaxThroughputMBps > 0 {
 		pace := time.Duration(float64(c.cfg.BlockSize) /
 			(c.cfg.MaxThroughputMBps * 1024 * 1024) * float64(time.Second))
@@ -191,8 +191,8 @@ func (c *DutyController) RestRatio() float64 {
 
 // ExternalIOMonitor answers "is anybody else using this disk".
 //
-// It reads the kernel's I/O counters, which never touches the bus -- so
-// polling them, unlike opening the device, cannot defeat USB autosuspend.
+// It reads the kernel's I/O counters, which never touches the bus, so polling
+// them cannot defeat USB autosuspend the way opening the device would.
 type ExternalIOMonitor struct {
 	cfg      Config
 	platform Platform
@@ -221,18 +221,18 @@ type diskStat struct {
 
 // RecordSelfRead tells the monitor how much of the traffic is ours.
 //
-// Corrections are done in SECTORS, not requests: the kernel merges requests --
-// this disk already shows merges in field 4 -- but it never invents sectors, so
-// sectors are exact where a request count is only approximate.
+// The correction is done in sectors. The kernel merges requests (this disk
+// already shows merges in field 4) but never invents sectors, so a sector
+// count is exact where a request count is only approximate.
 func (m *ExternalIOMonitor) RecordSelfRead(n int) {
 	m.selfSectors += uint64(n) / sectorSize
 }
 
 // Sample returns estimated foreign read bytes/s and write IOPS.
 //
-// Writes need no correction at all: the daemon holds the device O_RDONLY, so
-// every write in the counters belongs to somebody else. That makes writes both
-// the cleanest signal available and, on an f2fs overlay, the one that actually
+// Writes need no correction: the daemon holds the device O_RDONLY, so every
+// write in the counters belongs to somebody else. That makes writes the
+// cleanest signal available and, on an f2fs overlay, the one that actually
 // fires.
 func (m *ExternalIOMonitor) Sample() (readBps, writeIOPS float64, err error) {
 	st, err := m.platform.IOStats(m.presence)
@@ -251,8 +251,8 @@ func (m *ExternalIOMonitor) Sample() (readBps, writeIOPS float64, err error) {
 	}
 
 	// Unsigned wraparound arithmetic. A counter that went backwards means it
-	// was reset, which means the device re-enumerated -- a free cross-check on
-	// the dropout path rather than a number to be trusted.
+	// was reset, which means the device re-enumerated. That is a free
+	// cross-check on the dropout path, and the delta itself cannot be trusted.
 	dRead := st.sectorsRead - m.lastSectorsRead
 	dWrite := st.writes - m.lastWrites
 	if st.sectorsRead < m.lastSectorsRead || st.writes < m.lastWrites {
@@ -280,8 +280,8 @@ func (m *ExternalIOMonitor) busy(readBps, writeIOPS float64) bool {
 //
 // "Stop on any foreign I/O" is not an option: on a router the overlay is
 // written to continuously, and that policy would deadlock the scanner forever.
-// These are rate thresholds, and the ladder backs off progressively so that a
-// brief burst costs two seconds while sustained use costs the round.
+// These are rate thresholds, and the ladder backs off progressively, so a
+// brief burst costs two seconds and sustained use costs the round.
 func (m *ExternalIOMonitor) WaitIfBusy(ctx context.Context) error {
 	rd, wr, err := m.Sample()
 	if err != nil {

@@ -20,7 +20,7 @@ import (
 var webFS embed.FS
 
 // progressHz is how often live frames reach the browser. The scanner produces
-// far more than this; coalescing to a fixed rate is what keeps a router from
+// far more than this. Coalescing to a fixed rate is what keeps a router from
 // spending its CPU on a status page nobody is looking at.
 const progressHz = 2
 
@@ -72,7 +72,7 @@ func (s *Server) onLive(p LiveProgress) {
 }
 
 // drainPending takes the frames that arrived since the last call, leaving the
-// map empty. Taking them is the whole point: see the field's comment.
+// map empty. Emptying it is the point. See the field's comment for why.
 func (s *Server) drainPending() []LiveProgress {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -95,8 +95,8 @@ func (s *Server) dropPending(key string) {
 }
 
 // RunPublisher is the single shared ticker that turns a firehose of scanner
-// callbacks into at most progressHz frames per second, and sends nothing at all
-// when nothing changed.
+// callbacks into at most progressHz frames per second, and sends nothing when
+// nothing changed.
 func (s *Server) RunPublisher(stop <-chan struct{}) {
 	t := time.NewTicker(time.Second / progressHz)
 	defer t.Stop()
@@ -155,9 +155,9 @@ func (s *Server) withGuards(next http.Handler) http.Handler {
 			}
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			// No cookies are used, so there is no ambient authority to steal --
-			// but a cross-site write should still be refused outright rather
-			// than relying on that reasoning holding forever.
+			// No cookies are used, so there is no ambient authority to steal. A
+			// cross-site write is still refused outright, so that nothing
+			// depends on that reasoning holding forever.
 			if site := r.Header.Get("Sec-Fetch-Site"); site != "" &&
 				site != "same-origin" && site != "none" {
 				writeError(w, http.StatusForbidden, "FORBIDDEN", "cross-site request")
@@ -167,7 +167,7 @@ func (s *Server) withGuards(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost {
 			// A JSON content type is what a cross-origin form cannot produce.
 			// DELETE carries no body and is unreachable from a form at all, so
-			// the check belongs to POST rather than to writes in general.
+			// the check belongs to POST alone.
 			if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 				writeError(w, http.StatusUnsupportedMediaType, "VALIDATION_ERROR",
 					"expected application/json")
@@ -288,7 +288,7 @@ func (s *Server) views(detail bool) []DiskView {
 			first := true
 			for _, a := range ages {
 				if a == 0 {
-					continue // never read; counted separately by the UI
+					continue // never read, counted separately by the UI
 				}
 				if first || a < oldest {
 					oldest, first = a, false
@@ -309,11 +309,12 @@ func (s *Server) views(detail bool) []DiskView {
 		out = append(out, v)
 	}
 
-	// Map order is not an order. Without this the fleet list arrives shuffled
-	// on every poll: the cards swap places under the pointer, and the disk the
-	// page selects on load is whichever one the runtime felt like yielding
-	// first. Absent disks sink to the bottom, which is the only reordering a
-	// reader should ever see and one they caused by pulling the stick.
+	// Map iteration order is not stable. Without this the fleet list arrives
+	// shuffled on every poll: the cards swap places under the pointer, and the
+	// disk the page selects on load is whichever one the runtime felt like
+	// yielding first. Absent disks sink to the bottom, which is the only
+	// reordering a reader should ever see and one they caused by pulling the
+	// stick.
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Present != out[j].Present {
 			return out[i].Present
@@ -357,7 +358,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // Completed rounds never change, so they are served immutable and a browser
 // fetches each one exactly once for the lifetime of the page. That is what
 // makes the stacked multi-pass view affordable on a router: twelve passes cost
-// twelve requests ever, not twelve per render.
+// twelve requests in total, however many times the view is redrawn.
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 	key, ok := diskKey(w, r)
 	if !ok {
@@ -448,9 +449,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Named after the CLI flag rather than something tidier like "force". The
-	// awkwardness is the point in both places: this clears a window that the
-	// last round opened because the disk misbehaved.
+	// Named after the CLI flag. Something tidier like "force" would lose the
+	// awkwardness, which is the point in both places: this clears a window that
+	// the last round opened because the disk misbehaved.
 	var body struct {
 		IMeanIt bool `json:"i_mean_it"`
 	}
@@ -465,9 +466,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, CodeScanInProgress,
 			"a round is already running on this disk")
 	case errors.Is(err, ErrScanSuppressed):
-		// Refusing here is the point. The suppression window exists because the
-		// disk just took a filesystem down with it, and impatience is not a
-		// reason to go back in early.
+		// This refusal is deliberate. The suppression window exists because the
+		// disk just took a filesystem down with it, and impatience is no reason
+		// to go back in early.
 		writeError(w, http.StatusConflict, CodeScanSuppressed,
 			"disk is in the cooldown window the last round opened")
 	case errors.Is(err, ErrNotFound):
@@ -479,9 +480,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStop ends the round running on a disk. It answers once the round has
-// been told, not once it has ended: that takes until the next segment boundary
-// or rest, and the page hears about it from the SCAN_END that follows.
+// handleStop ends the round running on a disk. It answers as soon as the round
+// has been told. The round itself ends at the next segment boundary or rest,
+// and the page hears about that from the SCAN_END that follows.
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	key, ok := diskKey(w, r)
 	if !ok {
@@ -501,7 +502,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleForget deletes one disk's stored state. The page asks the operator
-// first; the daemon does not ask twice, but it does refuse mid-round.
+// first. The daemon does not ask again, but it does refuse mid-round.
 func (s *Server) handleForget(w http.ResponseWriter, r *http.Request) {
 	key, ok := diskKey(w, r)
 	if !ok {
@@ -522,7 +523,7 @@ func (s *Server) handleForget(w http.ResponseWriter, r *http.Request) {
 }
 
 // CloseStreams ends every open event stream. Call it before shutting the HTTP
-// server down; see Hub.Close for why the order matters.
+// server down. Hub.Close says why the order matters.
 func (s *Server) CloseStreams() { s.hub.Close() }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {

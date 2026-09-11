@@ -8,12 +8,12 @@ import (
 
 // Window is a fixed-size ring with an exact median.
 //
-// An exact sliding median is used rather than a streaming estimator like P².
-// P² exists to bound memory, and 512 samples is 4 KB -- there is nothing to
-// save. What P² costs instead is accuracy on exactly the shape of data this
-// program sees: heavy-tailed, where rare 100x outliers drag an estimator off
-// for a long time afterwards. Here the outliers are the signal, and they must
-// move the threshold as little as possible.
+// An exact sliding median is used instead of a streaming estimator like P².
+// P² exists to bound memory, and 512 samples is 4 KB, so there is nothing to
+// save. What P² costs is accuracy on the shape of data this program sees:
+// heavy-tailed, where rare 100x outliers drag an estimator off for a long time
+// afterwards. Here the outliers are the signal, and they must move the
+// threshold as little as possible.
 type Window struct {
 	ring    []time.Duration
 	pos     int
@@ -57,11 +57,11 @@ func (w *Window) Median() time.Duration {
 // they must not be the same number.
 //
 // RoundP50 is frozen after warm-up. A threshold that tracked a degrading disk
-// would raise itself out of range exactly when the disk started needing it --
-// the detector would go quiet at the precise moment of failure.
+// would raise itself out of range exactly when the disk started needing it,
+// and the detector would go quiet at the moment of failure.
 //
 // Rolling is live and feeds only the duty-cycle controller, where tracking
-// drift is the entire point.
+// drift is the point.
 type Baseline struct {
 	RoundP50 time.Duration
 	Rolling  *Window
@@ -71,10 +71,10 @@ type Baseline struct {
 
 // thresholds turns a learned p50 into the two decision lines.
 //
-// Multipliers rather than fixed milliseconds because the right number differs
-// per disk. Against a measured 10ms p50 they produce 50ms and 500ms, which is
-// exactly where the forensics put the two interesting populations --
-// the heuristic reproduces the hand-picked values, which is the best evidence
+// They are multipliers on the p50 because the right number of milliseconds
+// differs per disk. Against a measured 10ms p50 they produce 50ms and 500ms,
+// which is exactly where the forensics put the two interesting populations.
+// The heuristic reproduces the hand-picked values, which is the best evidence
 // available that it is calibrated correctly.
 //
 // The floors matter for fast disks, where 5x a 2ms p50 would be pure noise. The
@@ -100,14 +100,14 @@ func clampDur(v, lo, hi time.Duration) time.Duration {
 
 // LearnBaseline reads a warm-up sample and freezes the round's thresholds.
 //
-// The measured danger line lands near 500ms, and that number carries the whole
+// The measured danger line lands near 500ms, and that number carries the
 // justification for the backoff strategy. The controller's hang is a constant
 // 1500-1800ms, but by the time 1500ms has been measured the round is already
-// lost -- the device reset follows and a mounted overlay is already gone. 500ms
-// is the last point at which stopping is still a choice. And it costs nothing:
-// of the 347 blocks over 500ms in the forensics, 345 read normally on the very
-// next pass, so a read that reached 500ms has already handed the controller its
-// reclaim trigger.
+// lost: the device reset follows and a mounted overlay is already gone. 500ms
+// is the last point at which stopping is still a choice. It also costs
+// nothing: of the 347 blocks over 500ms in the forensics, 345 read normally on
+// the next pass, so a read that reached 500ms has already handed the
+// controller its reclaim trigger.
 func LearnBaseline(ctx context.Context, r BlockReader, cfg Config, start int64,
 	learned time.Duration) (Baseline, error) {
 
@@ -133,8 +133,9 @@ func LearnBaseline(ctx context.Context, r BlockReader, cfg Config, start int64,
 		if coherent(samples) {
 			break
 		}
-		// The sample straddled something unusual. Extend rather than freeze a
-		// threshold derived from a patch that is not representative.
+		// The sample straddled something unusual. Extend the warm-up instead
+		// of freezing a threshold derived from a patch that is not
+		// representative.
 		off += int64(len(samples)) * blocks
 		samples = samples[:0]
 	}

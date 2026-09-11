@@ -102,8 +102,8 @@ func TestCooldownOverrideClearsTheWindowAndRecordsIt(t *testing.T) {
 
 // A stick that is pulled before its probation ends leaves nothing worth
 // keeping, and keeping it anyway is how disks/ grows an entry for every stick
-// that was ever in a port for ten seconds -- or, for a stick with no serial, one
-// entry per port it was ever in.
+// that was ever in a port for ten seconds. A stick with no serial would get
+// one entry per port it was ever in.
 func TestTickForgetsAnUnadoptedDiskThatWasPulled(t *testing.T) {
 	f := newFakeTree(t)
 	f.addUSBNode("usb4/4-2", "090c", "1000", "0011223344556677", "4", "2")
@@ -186,8 +186,8 @@ func TestTickKeepsAbsentDisksThatCarryHistoryOrADecision(t *testing.T) {
 }
 
 // Forgetting is the one destructive thing the API can be asked for. Mid-round
-// it is refused rather than queued: persistRound would write the history
-// straight back when the round ended.
+// it is refused. It cannot simply be queued, because persistRound would write
+// the history straight back when the round ended.
 func TestForgetRefusesMidRoundThenDeletesEverything(t *testing.T) {
 	store, err := OpenStore(t.TempDir(), quietLogger())
 	if err != nil {
@@ -232,7 +232,7 @@ func TestForgetRefusesMidRoundThenDeletesEverything(t *testing.T) {
 }
 
 // Scan now is somebody deciding this stick is worth a round, and the waits
-// before an automatic one -- probation, the grace after boot -- exist for scans
+// before an automatic one (probation, the grace after boot) exist for scans
 // nobody asked for. The request used to move next_scan_at and then sit out
 // both, so the page called the scan overdue while nothing ran.
 func TestRequestScanSkipsTheWaitsForUnaskedScans(t *testing.T) {
@@ -267,7 +267,7 @@ func TestRequestScanSkipsTheWaitsForUnaskedScans(t *testing.T) {
 		t.Fatalf("after Scan now: adopted=%v, round started=%v", adopted, started)
 	}
 
-	// The round cannot open the fake node, so it ends at once; wait it out.
+	// The round cannot open the fake node, so it ends at once. Wait it out.
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		sup.mu.Lock()
 		busy := st.Scanning
@@ -335,7 +335,7 @@ func TestRequestScanStartsTheRoundWithoutWaitingForATick(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The fake node cannot be opened, so the round ends as soon as it begins.
-	// Adopted with the request spent is the proof that it began; no longer
+	// Adopted with the request spent is the proof that it began. No longer
 	// scanning is what lets the store close under it.
 	waitFor("round after Scan now", func(st *diskState) bool {
 		return !st.ScanRequested && !st.Meta.AdoptedAt.IsZero() && !st.Scanning
@@ -343,9 +343,9 @@ func TestRequestScanStartsTheRoundWithoutWaitingForATick(t *testing.T) {
 }
 
 // Stop ends the round and nothing else. It is refused where there is no round
-// to end, a second press is the same stop rather than another one, and the log
-// says where the pass was when somebody ended it -- otherwise all that is left
-// is a cancelled pass nobody can tell from a shutdown.
+// to end, a second press counts as the same stop, and the log says where the
+// pass was when somebody ended it. Without that, all that is left is a
+// cancelled pass nobody can tell from a shutdown.
 func TestStopEndsTheRunningRoundOnce(t *testing.T) {
 	store, err := OpenStore(t.TempDir(), quietLogger())
 	if err != nil {

@@ -12,8 +12,8 @@ import (
 
 // BlockReader is the seam the scanner is tested through.
 //
-// A fake returning a scripted latency profile -- a 500ms block at every
-// offset%32MiB==31, a hard dropout at 40 GiB -- exercises every branch of the
+// A fake returning a scripted latency profile (a 500ms block at every
+// offset%32MiB==31, a hard dropout at 40 GiB) exercises every branch of the
 // backoff logic without a physical stick. That is the only way this logic gets
 // tested at all, and it is the highest-value test in the project: a bug here
 // costs a router its filesystem.
@@ -34,10 +34,10 @@ type Device struct {
 
 // alignedBuffer returns page-aligned, off-heap memory for O_DIRECT.
 //
-// An anonymous mapping is page aligned by construction, which beats the usual
-// over-allocate-and-reslice trick twice over: it cannot be invalidated by a
-// future moving collector, and an accidental append cannot hand the kernel a
-// heap address that no longer satisfies the alignment rule.
+// An anonymous mapping is page aligned by construction. That has two
+// advantages over the usual over-allocate-and-reslice trick: a future moving
+// collector cannot invalidate it, and an accidental append cannot hand the
+// kernel a heap address that no longer satisfies the alignment rule.
 func alignedBuffer(n int) ([]byte, error) {
 	b, err := syscall.Mmap(-1, 0, n,
 		syscall.PROT_READ|syscall.PROT_WRITE,
@@ -49,7 +49,8 @@ func alignedBuffer(n int) ([]byte, error) {
 }
 
 // alignment is what O_DIRECT demands of the buffer address, the file offset and
-// the length -- all three, which is why everything here uses one value.
+// the length. All three share the rule, which is why everything here uses one
+// value.
 func alignment(p Presence) int {
 	a := os.Getpagesize()
 	if lbs := p.Identity.LogicalBlockSize; lbs > a {
@@ -60,11 +61,11 @@ func alignment(p Presence) int {
 
 // OpenDevice opens the whole-disk node read-only and unbuffered.
 //
-// Unbuffered is not an optimisation here, it is the entire mechanism: a
-// buffered read can be served from the page cache without touching NAND, which
-// would make the daemon a very elaborate no-op. It also keeps us from evicting
-// the overlay's own cache while we sweep 60 GiB past it. What that takes
-// differs by kernel, and scanOpenFlags says what it is on each one.
+// Unbuffered is the whole mechanism. A buffered read can be served from the
+// page cache without touching NAND, which would make the daemon a very
+// elaborate no-op. It also keeps us from evicting the overlay's own cache while
+// we sweep 60 GiB past it. What that takes differs by kernel, and
+// scanOpenFlags says what it is on each one.
 //
 // The open is not exclusive either: running while the disk is a live overlay
 // is the whole point. The refresh command is the mirror image.
@@ -102,17 +103,17 @@ func (d *Device) Presence() Presence { return d.presence }
 
 // BlockCount is the number of whole blocks. A trailing partial block is not
 // counted: with O_DIRECT the remainder below one logical block cannot be read
-// at all, and reading past the end returns 0 bytes (EOF) rather than an error,
-// which would otherwise be misread as a failure.
+// at all, and reading past the end returns 0 bytes (EOF) with no error, which
+// would otherwise be misread as a failure.
 func (d *Device) BlockCount() int64 { return d.Size() / int64(d.blockSize) }
 
 // ReadBlock times one aligned read of exactly one block at off.
 //
 // os.File.ReadAt is a plain pread(2) here, and its fdMutex keeps the descriptor
-// alive for the duration -- the thing a raw syscall.Pread on a stashed int fd
-// gets wrong. time.Since uses the monotonic clock, so an NTP step mid-read
-// cannot manufacture a fake 1500ms hang, which on a router that has just synced
-// its clock for the first time is a real scenario rather than a hypothetical.
+// alive for the duration, which a raw syscall.Pread on a stashed int fd would
+// not. time.Since uses the monotonic clock, so an NTP step mid-read cannot
+// manufacture a fake 1500ms hang. That is a real scenario on a router that has
+// just synced its clock for the first time.
 func (d *Device) ReadBlock(off int64) (time.Duration, error) {
 	start := time.Now()
 	n, err := d.file.ReadAt(d.buf, off)
@@ -133,9 +134,9 @@ func (d *Device) ReadBlock(off int64) (time.Duration, error) {
 func (d *Device) classify(err error) error {
 	switch {
 	case errors.Is(err, syscall.EINVAL):
-		// Alignment violation: always our bug, never the device's. Kept apart
-		// from ErrMediaError so an O_DIRECT mistake cannot spend months
-		// disguised as a mysteriously flaky stick.
+		// Alignment violation, which is always our bug. Kept apart from
+		// ErrMediaError so an O_DIRECT mistake cannot spend months disguised
+		// as a mysteriously flaky stick.
 		return fmt.Errorf("%w: %v", ErrAlignment, err)
 
 	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ENXIO):
@@ -157,8 +158,8 @@ func (d *Device) classify(err error) error {
 //
 // A stick left at power/control=auto with a short autosuspend delay pays the
 // USB resume cost on the first read after an idle gap. Recorded, that becomes
-// a phantom slow block; worse, it lands during warm-up and poisons the very
-// baseline it is supposed to establish.
+// a phantom slow block. Worse, it lands during warm-up and poisons the baseline
+// that warm-up exists to establish.
 func (d *Device) WarmUp(ctx context.Context, discard int) error {
 	suspended := readSysString(filepath.Join(d.presence.USBPath, "power", "runtime_status"))
 	for i := 0; i < discard; i++ {
@@ -179,8 +180,8 @@ func (d *Device) WarmUp(ctx context.Context, discard int) error {
 
 // WaitForReattach re-enumerates sysfs until the same identity comes back.
 //
-// Nothing resumes scanning afterwards -- the round is over either way -- so
-// this exists to record the recovery latency and, more importantly, to confirm
+// Nothing resumes scanning afterwards, since the round is over either way.
+// This exists to record the recovery latency and, more importantly, to confirm
 // that a mounted overlay's backing store actually returned.
 //
 // The deadline is generous because measured re-enumeration is 5-6s and the
@@ -212,7 +213,7 @@ func WaitForReattach(ctx context.Context, pl Platform, want DiskIdentity,
 		}
 		// The node can exist before the device answers commands, and on
 		// devtmpfs there is a window where /dev/<name> is not there yet. An
-		// ENOENT here means "keep waiting", not "gone for good".
+		// ENOENT here just means keep waiting.
 		dev, err := OpenDevice(p, blockSize, pl)
 		if err != nil {
 			continue

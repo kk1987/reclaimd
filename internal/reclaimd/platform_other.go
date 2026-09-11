@@ -12,7 +12,7 @@ import (
 
 // DefaultPlatform on a kernel this program has no discovery for. Everything
 // else builds, so supporting a kernel means writing its Platform and nothing
-// more; until then the first question about a disk gets a plain no.
+// more. Until then the first question about a disk gets a plain no.
 func DefaultPlatform() Platform { return unsupported{} }
 
 var errUnsupported = fmt.Errorf("no USB disk discovery for %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -35,6 +35,6 @@ const (
 
 func onTmpfs(string) bool { return false }
 
-// kernelVersion names the kernel as the Go runtime knows it; its release would
+// kernelVersion names the kernel as the Go runtime knows it. Its release would
 // take a platform file of its own.
 func kernelVersion() (name, release string) { return runtime.GOOS, "" }

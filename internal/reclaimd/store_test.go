@@ -44,8 +44,8 @@ func TestLatencyRoundTrip(t *testing.T) {
 		t.Errorf("baseline = %v, want 10ms", got.Baseline)
 	}
 
-	// The whole point of 32us units is holding both ends of the measured
-	// distribution: a 9ms normal read and a 1792ms controller hang.
+	// 32us units exist to hold both ends of the measured distribution: a 9ms
+	// normal read and a 1792ms controller hang.
 	for _, tc := range []struct {
 		idx  int
 		want time.Duration
@@ -66,7 +66,7 @@ func TestLatencyRoundTrip(t *testing.T) {
 	}
 }
 
-// A single hang averaged with healthy neighbours disappears; taking the max is
+// A single hang averaged with healthy neighbours disappears. Taking the max is
 // what keeps the interesting sample alive through downsampling.
 func TestCoarseTakesWorstNotMean(t *testing.T) {
 	m := NewLatencyMap(1<<20, 64, 1, time.Now())
@@ -88,8 +88,8 @@ func TestCoarseTakesWorstNotMean(t *testing.T) {
 	}
 }
 
-// A segment where only some blocks were read should report the measurement,
-// not the skip: otherwise partial coverage looks like no coverage.
+// A segment where only some blocks were read should report the measurement.
+// Reporting the skip would make partial coverage look like no coverage.
 func TestCoarsePrefersMeasurementOverSkip(t *testing.T) {
 	m := NewLatencyMap(1<<20, 32, 1, time.Now())
 	m.Values[5] = EncodeLatency(12 * time.Millisecond)
@@ -220,10 +220,10 @@ func TestPruneKeepsTiersSeparate(t *testing.T) {
 // TestWriteAtomicSurvivesKill spawns a child that writes the state file in a
 // tight loop, SIGKILLs it at an arbitrary moment, and checks what is left.
 //
-// The property under test is the one that matters after a router loses power:
-// the file on disk is either the previous complete version or the next complete
-// version, and never a truncated one. A zero-length state file is the classic
-// symptom of skipping the parent-directory fsync.
+// After a router loses power, the file on disk has to be either the previous
+// complete version or the next complete version, never a truncated one. A
+// zero-length state file is the classic symptom of skipping the
+// parent-directory fsync.
 func TestWriteAtomicSurvivesKill(t *testing.T) {
 	if os.Getenv("RECLAIMD_ATOMIC_CHILD") != "" {
 		atomicWriteChild()
@@ -263,7 +263,7 @@ func TestWriteAtomicSurvivesKill(t *testing.T) {
 	}
 
 	// The temp file may survive a kill, but it must never be mistaken for the
-	// real one -- the rename is what publishes a write.
+	// real one. The rename is what publishes a write.
 	if _, err := os.Stat(target + ".tmp"); err == nil {
 		t.Log("a leftover .tmp is expected; it is never read back")
 	}
@@ -291,7 +291,7 @@ func atomicWriteChild() {
 // mustConfig returns the defaults resolved against the drive from the
 // forensics, whose max_sectors_kb is 1024. Block size is derived per disk in
 // production, so a test that wants to talk about blocks has to say which disk
-// it means; every fake disk in this package models that one.
+// it means. Every fake disk in this package models that one.
 func mustConfig(t *testing.T) Config {
 	t.Helper()
 	c, err := LoadConfigFromFile("")

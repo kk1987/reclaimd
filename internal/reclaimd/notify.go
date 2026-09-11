@@ -11,10 +11,11 @@ import (
 
 // notify sends one sd_notify datagram.
 //
-// The protocol is a single unconnected AF_UNIX datagram to $NOTIFY_SOCKET; a
+// The protocol is a single unconnected AF_UNIX datagram to $NOTIFY_SOCKET. A
 // leading '@' means an abstract socket, which Go spells with a leading NUL.
-// Fifteen lines of stdlib buys Type=notify and WatchdogSec, and a watchdog is
-// worth having on a daemon whose whole job is poking hardware known to hang.
+// Fifteen lines of stdlib are enough for Type=notify and WatchdogSec, and a
+// watchdog is worth having on a daemon whose whole job is poking hardware known
+// to hang.
 func notify(state string) error {
 	addr := os.Getenv("NOTIFY_SOCKET")
 	if addr == "" {
@@ -41,10 +42,10 @@ func NotifyStopping() error { return notify("STOPPING=1") }
 
 // RunWatchdog pings systemd from the supervisor's heartbeat.
 //
-// Deliberately not from a scanner: a scanner blocked 1.8 seconds inside pread
-// is the expected case on ailing flash, not a hang, and a watchdog that killed
-// the process for it would fire at precisely the moment things were working as
-// designed.
+// A scanner's heartbeat would be the wrong signal. A scanner blocked 1.8
+// seconds inside pread is the expected case on ailing flash and not a hang, and
+// a watchdog that killed the process for it would fire at the moment things
+// were working as designed.
 func RunWatchdog(ctx context.Context, beat func() time.Time) {
 	usecStr := os.Getenv("WATCHDOG_USEC")
 	if usecStr == "" {
@@ -63,7 +64,7 @@ func RunWatchdog(ctx context.Context, beat func() time.Time) {
 			return
 		case <-t.C:
 			if time.Since(beat()) > 3*interval {
-				continue // supervisor is wedged; let systemd notice
+				continue // supervisor is wedged, let systemd notice
 			}
 			_ = notify("WATCHDOG=1")
 		}
