@@ -36,6 +36,14 @@ const (
 	CodeNotRemovable       = "IGNORED_NOT_REMOVABLE"
 	CodeNoSerial           = "IGNORED_NO_SERIAL"
 	CodeInternalError      = "INTERNAL_ERROR"
+
+	// Why a round that wanted to rewrite did not, or stopped early. They go
+	// out as the code param of a REWRITE_SKIPPED event.
+	CodeRewriteUnsupportedFS = "REWRITE_UNSUPPORTED_FS"
+	CodeRewriteOpenFailed    = "REWRITE_OPEN_FAILED"
+	CodeRewriteFreezeFailed  = "REWRITE_FREEZE_FAILED"
+	CodeRewriteWatchdog      = "REWRITE_FREEZE_WATCHDOG"
+	CodeRewriteWriteFailed   = "REWRITE_WRITE_FAILED"
 )
 
 // ---------------------------------------------------------------------------

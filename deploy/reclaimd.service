@@ -36,6 +36,11 @@ DevicePolicy=closed
 # The permission is "r" only, which makes read-only a property the kernel
 # enforces on the cgroup. Our own O_RDONLY flag is only a promise. The refresh
 # job, which genuinely needs to write, ships as a separate unit.
+#
+# The automatic rewrite (rewrite.enabled in the config) cannot run under this
+# unit as shipped: no write access here, and no CAP_SYS_ADMIN for the
+# filesystem freeze. "rw" would let it rewrite an unmounted stick, which takes
+# O_EXCL and no freeze. That is a change to make on purpose.
 DeviceAllow=block-sd r
 
 # ---- filesystem ----

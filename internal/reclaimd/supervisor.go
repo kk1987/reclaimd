@@ -91,6 +91,7 @@ func NewSupervisor(cfg Config, store *Store, logger *slog.Logger, pl Platform) *
 
 // Run drives discovery and scheduling until the context is cancelled.
 func (s *Supervisor) Run(ctx context.Context) error {
+	s.thawLeftovers()
 	s.loadKnownDisks()
 
 	t := time.NewTicker(discoveryInterval)
@@ -106,6 +107,40 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		case <-s.wake:
 			s.tick(ctx)
 		}
+	}
+}
+
+// thawLeftovers undoes a freeze the previous run did not live to undo.
+//
+// The rewrite writes a marker before it freezes a filesystem and removes it
+// after the thaw, so a marker at startup means the last process died in
+// between, and every writer on the machine has been waiting since. This runs
+// before anything else, and in particular before the store is written to,
+// because on the router the store is on the frozen filesystem.
+func (s *Supervisor) thawLeftovers() {
+	m, err := s.store.LoadFreezeMarker()
+	if errors.Is(err, ErrNotFound) {
+		return
+	}
+	if err != nil {
+		s.logger.Error("read freeze marker", "error", err)
+		return
+	}
+	for _, pt := range m.Mounts {
+		thawed, err := thawIfFrozen(pt)
+		switch {
+		case err != nil:
+			s.logger.Error("thaw after a previous run", "mount", pt, "disk", m.Disk, "error", err)
+		case thawed:
+			s.logger.Error("thawed a filesystem a previous run left frozen",
+				"mount", pt, "disk", m.Disk, "frozen_at", m.At, "code", CodeRewriteWatchdog)
+		default:
+			s.logger.Info("freeze marker left behind, but the filesystem was not frozen",
+				"mount", pt, "disk", m.Disk)
+		}
+	}
+	if err := s.store.ClearFreezeMarker(); err != nil {
+		s.logger.Error("clear freeze marker", "error", err)
 	}
 }
 
@@ -427,13 +462,14 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 	_ = s.store.AppendEvent(key, Event{
 		Type: EventRound, Round: res.Summary.Seq,
 		Params: map[string]any{
-			"outcome":   res.Summary.Outcome,
-			"slow_n":    res.Summary.SlowBlocks,
-			"danger_n":  res.Summary.DangerBlocks,
-			"drop_n":    res.Summary.Dropouts,
-			"healed_n":  res.Summary.Healed,
-			"read_mib":  res.Summary.BytesRead >> 20,
-			"elapsed_s": res.Summary.EndedAt.Sub(res.Summary.StartedAt).Seconds(),
+			"outcome":     res.Summary.Outcome,
+			"slow_n":      res.Summary.SlowBlocks,
+			"danger_n":    res.Summary.DangerBlocks,
+			"drop_n":      res.Summary.Dropouts,
+			"healed_n":    res.Summary.Healed,
+			"rewritten_n": res.Summary.Rewritten,
+			"read_mib":    res.Summary.BytesRead >> 20,
+			"elapsed_s":   res.Summary.EndedAt.Sub(res.Summary.StartedAt).Seconds(),
 		},
 	})
 
@@ -454,6 +490,7 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 		"danger_n", res.Summary.DangerBlocks,
 		"drop_n", res.Summary.Dropouts,
 		"healed_n", res.Summary.Healed,
+		"rewritten_n", res.Summary.Rewritten,
 		"next_scan_at", sched.NextScanAt)
 }
 

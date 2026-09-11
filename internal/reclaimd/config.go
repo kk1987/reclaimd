@@ -202,6 +202,85 @@ type Config struct {
 
 	KeepFullProfiles   int `json:"keep_full_profiles_n"`
 	KeepCoarseProfiles int `json:"keep_coarse_profiles_n"`
+
+	// ---- rewrite ----
+
+	// Rewrite is the one part of the daemon that writes to a disk, and it is
+	// off unless a config says otherwise. See RewriteConfig.
+	Rewrite RewriteConfig `json:"rewrite"`
+}
+
+// RewriteConfig governs the in-place rewrite of slow blocks, the one thing the
+// daemon does that writes to a disk.
+//
+// Some controllers reclaim a block on their own once a read has come back
+// slow, and on those a pass of reads is the whole maintenance. Others do not,
+// and on those the data keeps aging until the host writes it again. The daemon
+// tells the two apart from its own re-probe: a block that was slow, was read
+// again ten minutes later and is still slow was not reclaimed. Once enough of
+// them say so, the daemon writes each slow block back with the bytes it just
+// read from it, which to the NAND is a fresh program cycle and to the
+// filesystem is nothing at all.
+//
+// On a mounted disk the filesystem is frozen around every batch so nothing
+// else can write in between the read and the write-back. Only f2fs is
+// supported there, because it keeps its metadata out of the block device's
+// page cache and a raw write underneath it collides with nothing. A disk with
+// nothing mounted is opened exclusively instead, the way refresh does.
+type RewriteConfig struct {
+	// Enabled is false by default. The daemon has promised to be read-only for
+	// long enough that starting to write has to be a decision somebody made in
+	// a config file, and one they can find again.
+	Enabled bool `json:"enabled"`
+
+	// Disks restricts the rewrite to these keys. Empty means every disk the
+	// daemon maintains.
+	Disks []string `json:"disks"`
+
+	// MinRounds and MinSamples are how much re-probe evidence it takes before
+	// a drive is judged to need rewriting: this many rounds that re-probed
+	// anything, and this many re-probed blocks between them. Writing on too
+	// little evidence costs wear. Waiting on too much costs nothing but time.
+	MinRounds  int `json:"min_rounds_n"`
+	MinSamples int `json:"min_samples_n"`
+
+	// StillSlowFraction is the share of re-probed blocks that must still be
+	// slow for reads to be judged insufficient. The drive that prompted this
+	// sat at 78%, and the one whose controller reclaims on its own at 0%.
+	StillSlowFraction float64 `json:"still_slow_fraction"`
+
+	// BatchHold bounds how long one freeze lasts. Every write on the machine
+	// waits for the thaw, so a batch is sized in time, not bytes, and this is
+	// the budget. FreezeMax is the watchdog behind it: if a batch has not
+	// thawed by then, something has gone wrong, and the filesystem is thawed
+	// from a timer regardless of what the batch is doing.
+	BatchHold Duration `json:"batch_hold"`
+	FreezeMax Duration `json:"freeze_max"`
+
+	// BatchGap is the pause between batches, so that whatever queued up
+	// behind a freeze gets to run before the next one.
+	BatchGap Duration `json:"batch_gap"`
+
+	// MaxPerRoundMiB caps what one round rewrites. A neglected drive can show
+	// thousands of slow blocks on its first pass, and the rest can wait for
+	// the next one.
+	MaxPerRoundMiB int64 `json:"max_mib_per_round"`
+}
+
+// RewriteWanted says whether the config asks for rewrites on this disk.
+func (c Config) RewriteWanted(key string) bool {
+	if !c.Rewrite.Enabled {
+		return false
+	}
+	if len(c.Rewrite.Disks) == 0 {
+		return true
+	}
+	for _, k := range c.Rewrite.Disks {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) withDefaults() {
@@ -351,6 +430,29 @@ func (c *Config) withDefaults() {
 	if c.KeepCoarseProfiles == 0 {
 		c.KeepCoarseProfiles = 104
 	}
+	// Rewrite.Enabled keeps its zero. Everything under it has a default so
+	// that turning it on is one line.
+	if c.Rewrite.MinRounds == 0 {
+		c.Rewrite.MinRounds = 2
+	}
+	if c.Rewrite.MinSamples == 0 {
+		c.Rewrite.MinSamples = 8
+	}
+	if c.Rewrite.StillSlowFraction == 0 {
+		c.Rewrite.StillSlowFraction = 0.5
+	}
+	if c.Rewrite.BatchHold == 0 {
+		c.Rewrite.BatchHold = Duration(time.Second)
+	}
+	if c.Rewrite.FreezeMax == 0 {
+		c.Rewrite.FreezeMax = Duration(10 * time.Second)
+	}
+	if c.Rewrite.BatchGap == 0 {
+		c.Rewrite.BatchGap = Duration(5 * time.Second)
+	}
+	if c.Rewrite.MaxPerRoundMiB == 0 {
+		c.Rewrite.MaxPerRoundMiB = 1024
+	}
 }
 
 func (c *Config) withEnvOverrides() {
@@ -434,6 +536,14 @@ func (c Config) validate() error {
 	}
 	if c.ScanIntervalMin >= c.ScanIntervalMax {
 		return fmt.Errorf("scan_interval_min must be below scan_interval_max")
+	}
+	if f := c.Rewrite.StillSlowFraction; f <= 0 || f > 1 {
+		return fmt.Errorf("rewrite.still_slow_fraction must be in (0, 1], got %v", f)
+	}
+	if c.Rewrite.FreezeMax <= c.Rewrite.BatchHold {
+		// The watchdog is the thing that ends a freeze when the batch cannot,
+		// so it has to sit past where a healthy batch thaws on its own.
+		return fmt.Errorf("rewrite.freeze_max must be longer than rewrite.batch_hold")
 	}
 	return nil
 }

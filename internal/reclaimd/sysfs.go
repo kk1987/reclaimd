@@ -273,9 +273,10 @@ func (r Roots) Alive(p Presence) bool {
 	return true
 }
 
-// CheckNotInUse checks the mount and swap tables for the disk and every
-// partition of it.
-func (r Roots) CheckNotInUse(p Presence) error {
+// diskDevnos is the device number of the whole disk and of every partition
+// on it. Mount tables are matched by number, since the name can change under
+// us and the number cannot.
+func diskDevnos(p Presence) map[devno]bool {
 	devnos := map[devno]bool{{p.Major, p.Minor}: true}
 	if entries, err := os.ReadDir(p.SysPath); err == nil {
 		for _, e := range entries {
@@ -288,25 +289,18 @@ func (r Roots) CheckNotInUse(p Presence) error {
 			}
 		}
 	}
+	return devnos
+}
 
-	f, err := os.Open(filepath.Join(r.Proc, "self", "mountinfo"))
+// CheckNotInUse checks the mount and swap tables for the disk and every
+// partition of it.
+func (r Roots) CheckNotInUse(p Presence) error {
+	mounts, err := r.Mounts(p)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 5 {
-			continue
-		}
-		maj, min, err := parseDevno(fields[2])
-		if err != nil {
-			continue
-		}
-		if devnos[devno{maj, min}] {
-			return fmt.Errorf("%w: %s is mounted at %s", ErrDeviceMounted, p.Node, fields[4])
-		}
+	if len(mounts) > 0 {
+		return fmt.Errorf("%w: %s is mounted at %s", ErrDeviceMounted, p.Node, mounts[0].Point)
 	}
 
 	sf, err := os.Open(filepath.Join(r.Proc, "swaps"))
@@ -321,6 +315,71 @@ func (r Roots) CheckNotInUse(p Presence) error {
 		}
 	}
 	return nil
+}
+
+// Mounts walks mountinfo for the disk's device numbers. Field 3 of mountinfo
+// is the filesystem's own device number, and a bind mount repeats it, so one
+// entry per number is one entry per filesystem, which is the unit a freeze
+// acts on.
+func (r Roots) Mounts(p Presence) ([]Mount, error) {
+	devnos := diskDevnos(p)
+	f, err := os.Open(filepath.Join(r.Proc, "self", "mountinfo"))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var out []Mount
+	seen := map[devno]bool{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 5 {
+			continue
+		}
+		maj, min, err := parseDevno(fields[2])
+		if err != nil {
+			continue
+		}
+		d := devno{maj, min}
+		if !devnos[d] || seen[d] {
+			continue
+		}
+		m := Mount{Point: unescapeMount(fields[4])}
+		// Optional fields sit between the mount options and a lone "-", and
+		// there may be any number of them. The filesystem type and its source
+		// are the two fields after the separator.
+		for i := 6; i+2 < len(fields); i++ {
+			if fields[i] == "-" {
+				m.FSType = fields[i+1]
+				m.Source = unescapeMount(fields[i+2])
+				break
+			}
+		}
+		seen[d] = true
+		out = append(out, m)
+	}
+	return out, sc.Err()
+}
+
+// unescapeMount undoes the octal escapes mountinfo uses for space, tab,
+// newline and backslash in a path.
+func unescapeMount(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) {
+			if v, err := strconv.ParseUint(s[i+1:i+4], 8, 8); err == nil {
+				b.WriteByte(byte(v))
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // IOStats reads /proc/diskstats, a procfs read that never touches the bus.

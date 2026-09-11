@@ -24,6 +24,7 @@ func (unsupported) Alive(Presence) bool                { return false }
 func (unsupported) CheckNotInUse(Presence) error       { return errUnsupported }
 func (unsupported) IOStats(Presence) (diskStat, error) { return diskStat{}, errUnsupported }
 func (unsupported) Uptime() (time.Duration, error)     { return 0, errUnsupported }
+func (unsupported) Mounts(Presence) ([]Mount, error)   { return nil, errUnsupported }
 
 const defaultStateDir = "/var/db/reclaimd"
 

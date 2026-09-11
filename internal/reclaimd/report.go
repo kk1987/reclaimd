@@ -269,8 +269,65 @@ func controllersFor(sched Schedule, rounds []RoundSummary, cfg Config, id DiskId
 		}
 	}
 	out = append(out, sup)
+	out = append(out, rewriteController(id.Key, rounds, cfg))
 
 	return out
+}
+
+// Rewrite reason codes, one per state the row can be in.
+const (
+	ReasonRewriteNoEvidence = "REWRITE_NO_EVIDENCE"
+	ReasonRewriteReadsHeal  = "REWRITE_READS_HEAL"
+	ReasonRewriteNeededOff  = "REWRITE_NEEDED_OFF"
+	ReasonRewriteActive     = "REWRITE_ACTIVE"
+)
+
+// rewriteController is the row that says whether reading is enough for this
+// drive, on what evidence, and what the daemon is doing about it if not. The
+// value is the share of re-probed blocks that were still slow, which is the
+// number the verdict turns on.
+func rewriteController(key string, rounds []RoundSummary, cfg Config) Controller {
+	ev := assessHealing(rounds, cfg.Rewrite)
+	c := Controller{
+		ID:      "rewrite",
+		Value:   round2(ev.StillSlowFraction()),
+		Unit:    "pct",
+		Formula: "still_slow / (healed + still_slow) over the last 6 passes that re-probed anything",
+		Params: map[string]any{
+			"samples_n":      ev.Samples(),
+			"healed_n":       ev.Healed,
+			"still_slow_n":   ev.StillSlow,
+			"still_slow_pct": round2(ev.StillSlowFraction()),
+			"rounds_n":       ev.Rounds,
+			"min_samples_n":  cfg.Rewrite.MinSamples,
+			"min_rounds_n":   cfg.Rewrite.MinRounds,
+			"threshold_pct":  cfg.Rewrite.StillSlowFraction,
+		},
+	}
+	switch {
+	case ev.Verdict == HealUnknown:
+		c.Reason = ReasonRewriteNoEvidence
+	case ev.Verdict == HealByRead:
+		c.Reason = ReasonRewriteReadsHeal
+	case !cfg.RewriteWanted(key):
+		c.Reason = ReasonRewriteNeededOff
+	default:
+		c.Reason = ReasonRewriteActive
+		// The most recent pass that wrote anything says what the writing did.
+		for i := len(rounds) - 1; i >= 0; i-- {
+			if rounds[i].Rewritten > 0 {
+				c.Params["rewritten_n"] = rounds[i].Rewritten
+				c.Params["rewrite_healed_n"] = rounds[i].RewriteHealed
+				c.Params["seq_n"] = rounds[i].Seq
+				break
+			}
+		}
+		if _, ok := c.Params["rewritten_n"]; !ok {
+			c.Params["rewritten_n"] = 0
+			c.Params["rewrite_healed_n"] = 0
+		}
+	}
+	return c
 }
 
 func orDefault(v, def string) string {

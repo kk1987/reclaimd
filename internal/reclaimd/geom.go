@@ -369,6 +369,33 @@ func (f freeBSD) CheckNotInUse(p Presence) error {
 	return fmt.Errorf("%w: %s is held open by GEOM class %s", ErrDeviceMounted, dev, h.geom.class)
 }
 
+// Mounts lists the filesystems mounted from the disk or any partition of it,
+// which on FreeBSD are the mounts whose source is the disk's node or that node
+// followed by a partition suffix (da0p1, da0s1a).
+func (f freeBSD) Mounts(p Presence) ([]Mount, error) {
+	mps, err := f.mounts()
+	if err != nil {
+		return nil, err
+	}
+	var out []Mount
+	seen := map[string]bool{}
+	for _, mp := range mps {
+		if !strings.HasPrefix(mp.From, p.Node) {
+			continue
+		}
+		rest := strings.TrimPrefix(mp.From, p.Node)
+		if rest != "" && rest[0] != 'p' && rest[0] != 's' {
+			continue // da10 is not a partition of da1
+		}
+		if seen[mp.From] {
+			continue
+		}
+		seen[mp.From] = true
+		out = append(out, Mount{Point: mp.On, FSType: mp.FSType, Source: mp.From})
+	}
+	return out, nil
+}
+
 // IOStats reads the disk's row from kern.devstat.all, the table iostat(8)
 // reads.
 func (f freeBSD) IOStats(p Presence) (diskStat, error) {

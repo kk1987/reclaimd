@@ -625,6 +625,56 @@ func (s *Store) LoadFreshness(key string) ([]uint32, error) {
 	return out, nil
 }
 
+// FreezeMarker says which filesystems the daemon is about to freeze, or was
+// freezing when it last died.
+//
+// A freeze outlives the process that made it. If the daemon is killed between
+// FIFREEZE and FITHAW, every write to that filesystem on the machine waits
+// forever, and on a router that filesystem is the root overlay. So the marker
+// is written and fsynced before the freeze and removed after the thaw, and the
+// next start thaws whatever it names. It is written before rather than after
+// because after the freeze nothing can be written to the disk the marker most
+// likely lives on.
+type FreezeMarker struct {
+	Schema int       `json:"schema"`
+	Disk   string    `json:"disk"`
+	Mounts []string  `json:"mounts"`
+	At     time.Time `json:"at"`
+}
+
+func (s *Store) freezeMarkerPath() string { return filepath.Join(s.root, "frozen.json") }
+
+func (s *Store) SaveFreezeMarker(m FreezeMarker) error {
+	m.Schema = stateSchema
+	if m.At.IsZero() {
+		m.At = time.Now()
+	}
+	return writeJSONAtomic(s.freezeMarkerPath(), m)
+}
+
+func (s *Store) LoadFreezeMarker() (FreezeMarker, error) {
+	var m FreezeMarker
+	if err := readJSON(s.freezeMarkerPath(), &m); err != nil {
+		return m, err
+	}
+	return m, checkSchema(s.freezeMarkerPath(), m.Schema)
+}
+
+// ClearFreezeMarker removes the marker and syncs the directory, so that a
+// power cut right after a clean thaw cannot bring the marker back and have
+// the next boot thaw a filesystem nobody froze.
+func (s *Store) ClearFreezeMarker() error {
+	if err := os.Remove(s.freezeMarkerPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	d, err := os.Open(s.root)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
 // ListDisks returns every key the store knows about, including ones not
 // currently plugged in, since their history is still worth showing.
 func (s *Store) ListDisks() ([]string, error) {

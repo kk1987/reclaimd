@@ -69,6 +69,12 @@ disk in front of it, and the UI shows the derivation.
   A round that stops early ends sooner than that delay, so a re-probe that
   skipped whatever was not yet due would report nothing on precisely the disks
   worth measuring.
+- Learns from that re-probe whether reading is enough for the drive in front
+  of it. Some controllers reclaim a block once a read has come back slow, and
+  on those a pass of reads is the whole maintenance. Others leave it where it
+  is, and on those the daemon can write each slow block back with its own
+  bytes, inside a filesystem freeze so nothing else writes in between. That is
+  off until a config turns it on. See [Automatic rewrite](#automatic-rewrite).
 - Serves a status page with live progress, the whole-drive latency map, the
   healing waterfall across passes (absolute, or diffed against the previous or
   the first pass), a freshness map of what has gone longest without a read, and
@@ -86,10 +92,12 @@ disk in front of it, and the UI shows the derivation.
 - Publishes its own wear bill in the footer. Measured at roughly 9 MiB a year
   on a ten-day cadence.
 
-The daemon never writes to a disk. It opens read-only, and the systemd unit's
-`DeviceAllow=block-sd r` has the kernel enforce that, so it does not rest on a
-promise the code makes about itself. Rewriting is a separate `refresh` command
-behind four gates.
+Out of the box the daemon never writes to a disk. It opens read-only, and the
+systemd unit's `DeviceAllow=block-sd r` has the kernel enforce that, so it does
+not rest on a promise the code makes about itself. Rewriting a whole drive is a
+separate `refresh` command behind four gates. The one exception is the
+automatic rewrite of slow blocks, which a config has to switch on and which
+needs root for the freeze.
 
 ## Nothing to tune
 
@@ -139,7 +147,7 @@ reclaimd version
 
 | command | does | disk I/O |
 |---|---|---|
-| `daemon` | discovery, adoption, scheduling, scanning, status page | read-only |
+| `daemon` | discovery, adoption, scheduling, scanning, status page | read-only, unless `rewrite.enabled` |
 | `scan` | one pass over one disk; outcome in the exit code | read-only |
 | `list` | enumerate USB disks and show computed keys | none |
 | `export` | dump all stored state as JSON | none |
@@ -181,11 +189,64 @@ the `-range` that picks up from there.
 The status page assembles both of those for the disk being viewed, with the key
 and the serial already filled in, next to the freshness map that is the reason
 to run one. It only ever produces text to copy: there is no `refresh` over HTTP,
-the daemon holds every device read-only, and the systemd unit's
-`DeviceAllow=block-sd r` means the kernel would refuse it a write even if it
-asked. Gate 1 is weaker when the serial is copied off the page instead of read
-off the device. That is the trade the page makes: it still catches the wrong
-drive, but not the wrong idea.
+and under the systemd unit `DeviceAllow=block-sd r` means the kernel would
+refuse the daemon a write even if it asked. Gate 1 is weaker when the serial is
+copied off the page instead of read off the device. That is the trade the page
+makes: it still catches the wrong drive, but not the wrong idea.
+
+### Automatic rewrite
+
+Whether a pass of reads refreshes anything depends on the controller. The
+Samsung in the router reclaims a block on its own once a read has come back
+slow, so on it the sweep is the whole maintenance. The 128 GB sticks do not: a
+block that read slow still reads slow ten minutes later, and keeps aging until
+the host writes it again. The daemon tells the two apart from its own
+re-probe, which is exactly that measurement one block at a time. Over the last
+few passes that re-probed anything it counts the blocks that healed against
+the blocks still slow, and once there are enough of them (two passes and eight
+blocks, by default) and at least half are still slow, reading is judged not
+enough. The decision desk shows the tally and the verdict on every drive,
+whether or not the rewrite is on.
+
+With `rewrite.enabled` set, a pass on such a drive goes on to write its slow
+blocks back after the re-probe. Each block is read and the same bytes written
+to the same place, which the filesystem cannot tell from nothing and the NAND
+takes as a fresh program cycle. Because the bytes are the ones that were
+there, the write is idempotent: a dropout or a power cut mid-write leaves
+either the old bytes or identical new ones, and there is nothing to repair. A
+block that fails to read is skipped, as in `refresh`, and never written back.
+
+On a mounted disk the filesystem is frozen around every batch (`FIFREEZE`,
+what `fsfreeze` and LVM snapshots use), so nothing can write to a block
+between the daemon reading it and writing it back. Writers block rather than
+fail, and f2fs's background GC checks for the freeze and skips its pass. A
+batch holds the freeze for about a second, then thaws and rests five seconds
+before the next, and a pass writes at most 1 GiB. Only f2fs is supported while
+mounted, because it keeps its metadata in its own inodes rather than the block
+device's page cache, where a raw write underneath ext4 would collide with the
+superblock and group descriptors ext4 keeps pinned there. A disk with nothing
+mounted is opened `O_EXCL` instead and needs no freeze.
+
+A freeze outlives the process that made it, and a daemon killed between the
+freeze and the thaw would leave every writer on the machine waiting. So a
+watchdog thaws from a timer if a batch overruns, a marker file is fsynced
+before each freeze and removed after the thaw, and the next start thaws
+whatever the marker names. The freeze needs `CAP_SYS_ADMIN`, which the daemon
+has on OpenWrt because it runs as root, and does not have under the systemd
+unit, which also gives it no write access to the device.
+
+Ten minutes after the last batch the rewritten blocks are read once more, so
+that "rewriting heals this drive" is measured rather than assumed. The event
+log gets one `REWRITE` line per pass with the counts, how long the filesystem
+was frozen for, and the result of that check, or a `REWRITE_SKIPPED` line with
+the reason.
+
+```json
+{ "rewrite": { "enabled": true } }
+```
+
+`rewrite.disks` narrows it to a list of keys. Everything else under `rewrite`
+has a default and is documented in `config.example.json`.
 
 ### OpenWrt
 
@@ -212,7 +273,17 @@ starts a daemon that was not running, so the same lines serve a first install.
 
 There is nothing to configure. The daemon finds the disk, derives its read size
 from it and schedules itself. `/etc/reclaimd/config.json` is read if it exists,
-and it is not expected to.
+and it is not expected to. The one thing worth putting there is the automatic
+rewrite, for a stick whose controller does not reclaim on read:
+
+```sh
+ssh root@<router> 'mkdir -p /etc/reclaimd &&
+  echo "{ \"rewrite\": { \"enabled\": true } }" > /etc/reclaimd/config.json &&
+  /etc/init.d/reclaimd restart'
+```
+
+The daemon runs as root there, which is what the filesystem freeze needs, and
+the overlay is f2fs, which is the one filesystem it will rewrite under.
 
 To reach the status page from the LAN, put it behind the web server the router
 is already running:
@@ -258,6 +329,13 @@ install -m0755 out/reclaimd-linux-amd64 /usr/bin/reclaimd
 install -m0644 deploy/reclaimd.service /etc/systemd/system/
 systemctl enable --now reclaimd
 ```
+
+The unit runs unprivileged with read-only access to disks, so the automatic
+rewrite cannot run under it as shipped: a mounted filesystem cannot be frozen
+without `CAP_SYS_ADMIN`, and the device cannot be opened for writing at all.
+An unmounted stick could be rewritten with `DeviceAllow=block-sd rw` alone,
+since that path takes `O_EXCL` and freezes nothing. That is a change to make
+on purpose, not one the unit makes for you.
 
 ### FreeBSD
 

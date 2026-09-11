@@ -295,6 +295,15 @@ func runDaemon(cfg reclaimd.Config, logger *slog.Logger) (bool, error) {
 	srv := reclaimd.NewServer(cfg, store, sup, logger)
 	srv.Build = reclaimd.BuildInfo{Version: version, Commit: commit, Date: buildDate}
 
+	if cfg.Rewrite.Enabled && os.Geteuid() != 0 {
+		// Freezing a filesystem takes CAP_SYS_ADMIN and writing a block device
+		// takes permission on the node, and the systemd unit grants neither.
+		// The rewrite phase would find that out on its own, one refused round
+		// at a time. Better to say so once, at the top of the log.
+		logger.Warn("rewrite is enabled but the daemon is not root; live rewrites "+
+			"need CAP_SYS_ADMIN for the freeze and write access to the device",
+			"uid", os.Geteuid())
+	}
 	if cfg.ListenAddr != "" && !isLoopback(cfg.ListenAddr) && cfg.UIToken == "" {
 		// An unauthenticated status page on a LAN interface has to be a
 		// deliberate choice. The warning is there so it cannot happen

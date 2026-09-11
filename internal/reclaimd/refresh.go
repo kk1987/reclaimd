@@ -38,7 +38,9 @@ const (
 // Reading is enough to trigger reclaim on the blocks the controller decides are
 // marginal. Rewriting is the bigger hammer: it refreshes everything whether the
 // controller agrees or not. That is why it is a separate command behind four
-// gates, and why the daemon never does it on its own.
+// gates. The daemon's own rewrite (rewrite.go) is the narrow version of this:
+// only the blocks that stayed slow, only once the re-probe has shown reads do
+// not heal them, and only with a config that says so.
 func Refresh(ctx context.Context, cfg Config, pl Platform, logger *slog.Logger, opts RefreshOpts) error {
 	if opts.Mode == "" {
 		opts.Mode = RefreshRewrite

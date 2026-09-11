@@ -25,6 +25,11 @@ type fakeDisk struct {
 
 	reported int // BlockSize() override; 0 means report blockSize honestly
 
+	// sticky models the other kind of controller, the one that does not
+	// reclaim a block on the strength of a slow read. A degraded block stays
+	// degraded until something writes it, which is what the rewrite is for.
+	sticky bool
+
 	reads    int
 	dropouts int
 	// gone models the device leaving the bus: once it drops, every
@@ -79,7 +84,9 @@ func (f *fakeDisk) ReadBlock(off int64) (time.Duration, error) {
 		return 1750 * time.Millisecond, ErrDeviceDisconnected
 	}
 	if d, ok := f.degraded[idx]; ok && !f.healed[idx] {
-		f.healed[idx] = true
+		if !f.sticky {
+			f.healed[idx] = true
+		}
 		return d, nil
 	}
 	return f.base, nil

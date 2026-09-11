@@ -32,5 +32,18 @@
   "scan_interval_init": "168h",
   "scan_interval_min": "12h",
   "scan_interval_max": "720h",
-  "_scan_interval": "Starting point and clamps for the multiplicative policy: clean x1.5, slow x0.7, dropout x0.5. The floor stops a sick disk being scanned into the ground. The ceiling stops a healthy one aging past the retention window this tool exists to defend."
+  "_scan_interval": "Starting point and clamps for the multiplicative policy: clean x1.5, slow x0.7, dropout x0.5. The floor stops a sick disk being scanned into the ground. The ceiling stops a healthy one aging past the retention window this tool exists to defend.",
+
+  "rewrite": {
+    "enabled": false,
+    "disks": [],
+    "min_rounds_n": 2,
+    "min_samples_n": 8,
+    "still_slow_fraction": 0.5,
+    "batch_hold": "1s",
+    "batch_gap": "5s",
+    "freeze_max": "10s",
+    "max_mib_per_round": 1024
+  },
+  "_rewrite": "The one thing in the daemon that writes to a disk, and off unless enabled is true. Once the re-probe has shown, over min_rounds_n passes and min_samples_n blocks, that at least still_slow_fraction of the slow blocks stay slow after a read, each pass writes its slow blocks back with the bytes it just read from them. On a mounted f2fs the filesystem is frozen for at most batch_hold per batch, with batch_gap between batches, and a watchdog thaws it at freeze_max regardless. Nothing but f2fs is rewritten while mounted. A disk with nothing mounted is opened O_EXCL instead. max_mib_per_round bounds one pass. disks, when set, limits the rewrite to those keys. Needs root for the freeze."
 }

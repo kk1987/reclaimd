@@ -202,6 +202,7 @@ type ExternalIOMonitor struct {
 	lastWrites      uint64
 	lastSample      time.Time
 	selfSectors     uint64
+	selfWrites      uint64
 
 	yieldStep int
 	busySince time.Time
@@ -228,12 +229,18 @@ func (m *ExternalIOMonitor) RecordSelfRead(n int) {
 	m.selfSectors += uint64(n) / sectorSize
 }
 
+// RecordSelfWrite counts one block written back by the rewrite phase. A block
+// is at most one command's worth, so it lands in the kernel's counter as one
+// request, which is the unit writes are measured in here.
+func (m *ExternalIOMonitor) RecordSelfWrite() { m.selfWrites++ }
+
 // Sample returns estimated foreign read bytes/s and write IOPS.
 //
-// Writes need no correction: the daemon holds the device O_RDONLY, so every
-// write in the counters belongs to somebody else. That makes writes the
-// cleanest signal available and, on an f2fs overlay, the one that actually
-// fires.
+// Outside the rewrite phase writes need no correction: the daemon holds the
+// device O_RDONLY, so every write in the counters belongs to somebody else.
+// That makes writes the cleanest signal available and, on an f2fs overlay,
+// the one that actually fires. During a rewrite the phase's own write-backs
+// are taken out, or the monitor would yield to the daemon itself.
 func (m *ExternalIOMonitor) Sample() (readBps, writeIOPS float64, err error) {
 	st, err := m.platform.IOStats(m.presence)
 	if err != nil {
@@ -242,7 +249,7 @@ func (m *ExternalIOMonitor) Sample() (readBps, writeIOPS float64, err error) {
 	now := time.Now()
 	if m.lastSample.IsZero() {
 		m.lastSectorsRead, m.lastWrites, m.lastSample = st.sectorsRead, st.writes, now
-		m.selfSectors = 0
+		m.selfSectors, m.selfWrites = 0, 0
 		return 0, 0, nil
 	}
 	dt := now.Sub(m.lastSample).Seconds()
@@ -263,11 +270,15 @@ func (m *ExternalIOMonitor) Sample() (readBps, writeIOPS float64, err error) {
 	if dRead > m.selfSectors {
 		foreignSectors = dRead - m.selfSectors
 	}
+	foreignWrites := uint64(0)
+	if dWrite > m.selfWrites {
+		foreignWrites = dWrite - m.selfWrites
+	}
 	m.foreignRd = float64(foreignSectors) * sectorSize / dt
-	m.foreignWr = float64(dWrite) / dt
+	m.foreignWr = float64(foreignWrites) / dt
 
 	m.lastSectorsRead, m.lastWrites, m.lastSample = st.sectorsRead, st.writes, now
-	m.selfSectors = 0
+	m.selfSectors, m.selfWrites = 0, 0
 	return m.foreignRd, m.foreignWr, nil
 }
 

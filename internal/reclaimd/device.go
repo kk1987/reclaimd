@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -30,7 +31,22 @@ type Device struct {
 	presence  Presence
 	blockSize int
 	platform  Platform
+	seed      maphash.Seed
 }
+
+// blockHasher is what a BlockReader can offer beyond latency: a hash of the
+// bytes the last read brought back. The re-probe uses it to tell a block the
+// filesystem rewrote from one the controller reclaimed, since both read fast
+// the second time. A fake that does not implement it is treated as never
+// changing.
+type blockHasher interface {
+	LastHash() uint64
+}
+
+// LastHash hashes the block the last ReadBlock filled the buffer with. The
+// seed is per process, which is all the comparison needs: both reads happen in
+// the same round.
+func (d *Device) LastHash() uint64 { return maphash.Bytes(d.seed, d.buf) }
 
 // alignedBuffer returns page-aligned, off-heap memory for O_DIRECT.
 //
@@ -83,7 +99,8 @@ func OpenDevice(p Presence, blockSize int, pl Platform) (*Device, error) {
 		f.Close()
 		return nil, err
 	}
-	return &Device{file: f, buf: buf, presence: p, blockSize: blockSize, platform: pl}, nil
+	return &Device{file: f, buf: buf, presence: p, blockSize: blockSize, platform: pl,
+		seed: maphash.MakeSeed()}, nil
 }
 
 func (d *Device) Close() error {

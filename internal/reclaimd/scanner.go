@@ -42,6 +42,10 @@ type retryEntry struct {
 	Latency    time.Duration
 	EventID    uint64
 	DeferUntil time.Time
+	// Hash is of the bytes the slow read returned, so the re-probe can tell
+	// a block the filesystem has since rewritten from one the controller
+	// reclaimed. Zero when the reader cannot hash, or the read failed.
+	Hash uint64
 }
 
 // Scanner runs one round over one disk.
@@ -50,10 +54,20 @@ type Scanner struct {
 	store    *Store
 	logger   *slog.Logger
 	platform Platform
+	rewriter *Rewriter
 }
 
 func NewScanner(cfg Config, store *Store, logger *slog.Logger, pl Platform) *Scanner {
-	return &Scanner{cfg: cfg, store: store, logger: logger, platform: pl}
+	return &Scanner{cfg: cfg, store: store, logger: logger, platform: pl,
+		rewriter: newRewriter(cfg, store, logger, pl)}
+}
+
+// lastHash asks the reader for a hash of its last block, if it can give one.
+func lastHash(dev BlockReader) uint64 {
+	if h, ok := dev.(blockHasher); ok {
+		return h.LastHash()
+	}
+	return 0
 }
 
 // RoundInput carries everything a round needs that it cannot derive itself.
@@ -94,9 +108,12 @@ type LiveProgress struct {
 	DropN     int     `json:"drop_n"`
 	DeferN    int     `json:"defer_n"`
 	ReprobeN  int     `json:"reprobe_n"`
-	SlowMs    float64 `json:"slow_threshold_ms"`
-	DangerMs  float64 `json:"danger_threshold_ms"`
-	Phase     string  `json:"phase"`
+	// RewrittenN counts the slow blocks the round has written back so far.
+	// It stays zero on every round that never enters the rewrite phase.
+	RewrittenN int     `json:"rewritten_n"`
+	SlowMs     float64 `json:"slow_threshold_ms"`
+	DangerMs   float64 `json:"danger_threshold_ms"`
+	Phase      string  `json:"phase"`
 }
 
 // Round phases, reported as codes.
@@ -104,6 +121,7 @@ const (
 	PhaseWarmup  = "WARMUP"
 	PhaseSweep   = "SWEEP"
 	PhaseReprobe = "REPROBE"
+	PhaseRewrite = "REWRITE"
 	PhaseDone    = "DONE"
 )
 
@@ -175,7 +193,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 
 	duty := NewDutyController(cfg)
 	var retries []retryEntry
-	var blocksRead, slow, danger, media, dropouts int
+	var blocksRead, slow, danger, media, dropouts, rewritten int
 	totalMiB := (blockCount * blockSize) >> 20
 
 	emit := func(phase string, pos int64) {
@@ -204,7 +222,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 			DriftN: round2(duty.Drift()), Duty: duty.State(),
 			ElapsedS: round2(elapsed), ETAS: round2(eta),
 			SlowN: slow, DangerN: danger, DropN: dropouts,
-			DeferN: deferred.Count(), ReprobeN: len(retries),
+			DeferN: deferred.Count(), ReprobeN: len(retries), RewrittenN: rewritten,
 			SlowMs: msOf(base.Slow), DangerMs: msOf(base.Danger),
 			Phase: phase,
 		})
@@ -268,7 +286,7 @@ sweep:
 				lat.Values[idx] = LatError
 				media++
 				retries = append(retries, s.deferBlock(in.Key, seq, off, d,
-					EventMedia, cfg.ReprobeDelay.Duration()))
+					EventMedia, cfg.ReprobeDelay.Duration(), 0))
 				markSegments(deferred, seg, seg, segCount)
 				continue sweep
 
@@ -288,7 +306,7 @@ sweep:
 			if d >= base.Danger {
 				danger++
 				retries = append(retries, s.deferBlock(in.Key, seq, off, d,
-					EventNearHang, cfg.ReprobeDelay.Duration()))
+					EventNearHang, cfg.ReprobeDelay.Duration(), lastHash(dev)))
 				markSegments(deferred, seg, seg+cfg.DangerSkipSegments, segCount)
 				if outcome == OutcomeClean {
 					outcome = OutcomeSlow
@@ -310,7 +328,7 @@ sweep:
 			if d >= base.Slow {
 				slow++
 				retries = append(retries, s.deferBlock(in.Key, seq, off, d,
-					EventSlow, cfg.ReprobeDelay.Duration()))
+					EventSlow, cfg.ReprobeDelay.Duration(), lastHash(dev)))
 				markSegments(deferred, seg, seg+cfg.SlowSkipSegments, segCount)
 				if outcome == OutcomeClean {
 					outcome = OutcomeSlow
@@ -342,10 +360,39 @@ sweep:
 		}
 	}
 
-	healed, stillSlow := 0, 0
+	healed, stillSlow, overwritten := 0, 0, 0
 	emit(PhaseReprobe, cursor)
 	if outcome != OutcomeDropout && outcome != OutcomeCancelled {
-		healed, stillSlow = s.reprobe(ctx, in, retries, base, lat, blockSize)
+		healed, stillSlow, overwritten = s.reprobe(ctx, in, retries, base, lat, blockSize)
+	}
+	res.Summary.Healed = healed
+	res.Summary.StillSlow = stillSlow
+	res.Summary.Overwritten = overwritten
+
+	// The rewrite comes after the re-probe because the re-probe is its
+	// evidence: this round's tally joins the earlier ones, and only a drive
+	// whose slow blocks stay slow after a read gets written to. A near-hang
+	// round still qualifies. The blocks that nearly hung are the ones most
+	// worth refreshing, and the sweep has already read them once.
+	if s.rewriteDue(in.Key, res.Summary, outcome) {
+		emit(PhaseRewrite, cursor)
+		rr := s.rewriter.Run(ctx, rewriteRequest{
+			Key: in.Key, Presence: in.Presence, Dev: dev, Ext: in.Ext,
+			Lat: lat, Slow: base.Slow,
+			OnProgress: func(off int64, n int) {
+				rewritten = n
+				emit(PhaseRewrite, off)
+			},
+		})
+		s.recordRewrite(in.Key, seq, rr)
+		res.Summary.Rewritten = rr.Rewritten
+		res.Summary.RewriteHealed = rr.Healed
+		if rr.Disconnected {
+			dropouts++
+			outcome = OutcomeDropout
+			s.onDropout(ctx, in, int(rr.DropOffset/(int64(perSeg)*blockSize)),
+				rr.DropOffset, 0, seq, perSeg, blockSize)
+		}
 	}
 
 	if outcome == OutcomeClean && media > 0 {
@@ -358,8 +405,6 @@ sweep:
 	res.Summary.DangerBlocks = danger
 	res.Summary.MediaErrors = media
 	res.Summary.Dropouts = dropouts
-	res.Summary.Healed = healed
-	res.Summary.StillSlow = stillSlow
 	res.Summary.Deferred = deferred.Count()
 	res.Summary.BytesRead = int64(blocksRead) * blockSize
 	res.Cursor = nextCursor(in.Schedule.Cursor, cursor, outcome, blockSize, perSeg, blockCount)
@@ -451,7 +496,7 @@ func (s *Scanner) onDropout(ctx context.Context, in RoundInput, seg int, off int
 }
 
 func (s *Scanner) deferBlock(key string, seq uint64, off int64, d time.Duration,
-	kind string, delay time.Duration) retryEntry {
+	kind string, delay time.Duration, hash uint64) retryEntry {
 
 	id := s.store.NextEventID()
 	_ = s.store.AppendEvent(key, Event{
@@ -465,7 +510,67 @@ func (s *Scanner) deferBlock(key string, seq uint64, off int64, d time.Duration,
 		},
 	})
 	return retryEntry{Offset: off, Reason: kind, Latency: d, EventID: id,
-		DeferUntil: time.Now().Add(delay)}
+		DeferUntil: time.Now().Add(delay), Hash: hash}
+}
+
+// rewriteDue says whether this round goes on to write its slow blocks back:
+// the config asks for it on this disk, the round is in a state to do it, and
+// the re-probe evidence, this round's included, says reads are not enough.
+func (s *Scanner) rewriteDue(key string, cur RoundSummary, outcome string) bool {
+	if s.rewriter == nil || !s.cfg.RewriteWanted(key) {
+		return false
+	}
+	switch outcome {
+	case OutcomeDropout, OutcomeCancelled, OutcomeExternal:
+		return false
+	}
+	hist, err := s.store.ListRounds(key, healingWindow*4)
+	if err != nil {
+		return false
+	}
+	return assessHealing(append(hist, cur), s.cfg.Rewrite).Verdict == HealByRewrite
+}
+
+// recordRewrite writes the phase down: one event with what it wrote and what
+// that did, or one saying why it wrote nothing.
+func (s *Scanner) recordRewrite(key string, seq uint64, r RewriteResult) {
+	if r.Candidates == 0 {
+		return
+	}
+	params := map[string]any{
+		"mode":         r.Mode,
+		"candidates_n": r.Candidates,
+		"rewritten_n":  r.Rewritten,
+		"written_mib":  r.Written >> 20,
+	}
+	if r.Code != "" {
+		params["code"] = r.Code
+	}
+	if r.Err != nil {
+		params["error"] = r.Err.Error()
+	}
+	if r.Rewritten == 0 {
+		_ = s.store.AppendEvent(key, Event{Type: EventRewriteSkipped, Round: seq, Params: params})
+		s.logger.Warn("rewrite skipped", "disk", key, "code", r.Code, "error", r.Err,
+			"candidates_n", r.Candidates)
+		return
+	}
+	params["truncated_n"] = r.Truncated
+	params["skipped_n"] = r.SkippedRead
+	params["batches_n"] = r.Batches
+	params["freeze_max_ms"] = r.FreezeMax.Milliseconds()
+	params["freeze_total_ms"] = r.FreezeTotal.Milliseconds()
+	if r.Verified {
+		params["healed_n"] = r.Healed
+		params["still_slow_n"] = r.StillSlow
+	}
+	_ = s.store.AppendEvent(key, Event{Type: EventRewrite, Round: seq, Params: params})
+	s.logger.Info("rewrite finished", "disk", key, "mode", r.Mode,
+		"rewritten_n", r.Rewritten, "written_mib", r.Written>>20,
+		"candidates_n", r.Candidates, "truncated_n", r.Truncated,
+		"batches_n", r.Batches, "freeze_max_ms", r.FreezeMax.Milliseconds(),
+		"healed_n", r.Healed, "still_slow_n", r.StillSlow, "verified", r.Verified,
+		"code", r.Code, "error", r.Err)
 }
 
 // reprobe revisits the blocks that caused a backoff.
@@ -476,10 +581,10 @@ func (s *Scanner) deferBlock(key string, seq uint64, off int64, d time.Duration,
 // also gives the background reclaim time to finish, which is the thing being
 // tested.
 func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEntry,
-	base Baseline, lat *LatencyMap, blockSize int64) (healed, stillSlow int) {
+	base Baseline, lat *LatencyMap, blockSize int64) (healed, stillSlow, overwritten int) {
 
 	if len(entries) == 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
 	if len(entries) > s.cfg.ReprobeMax {
 		// Probe the first ReprobeMax in sweep order. Probing all of them would
@@ -512,7 +617,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 	}
 	if wait > 0 {
 		if err := sleepCtx(ctx, wait); err != nil {
-			return 0, 0
+			return 0, 0, 0
 		}
 	}
 
@@ -527,6 +632,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 
 		worst := time.Duration(0)
 		failed := false
+		var nowHash uint64
 		for k := int64(-2); k <= 2; k++ {
 			off := e.Offset + k*blockSize
 			if off < 0 || off >= in.Dev.Size() {
@@ -537,6 +643,9 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 				failed = true
 				break
 			}
+			if k == 0 {
+				nowHash = lastHash(in.Dev)
+			}
 			if idx := off / blockSize; idx < int64(len(lat.Values)) {
 				lat.Values[idx] = EncodeLatency(d)
 			}
@@ -546,7 +655,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 		}
 		if failed {
 			// Do not push our luck on a disk that just failed a re-probe.
-			return healed, stillSlow
+			return healed, stillSlow, overwritten
 		}
 
 		switch {
@@ -557,6 +666,21 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 				HealsRef: e.EventID,
 				Params: map[string]any{
 					"latency_ms": worst.Milliseconds(),
+					"offset_mib": e.Offset >> 20,
+				},
+			})
+		case e.Hash != 0 && nowHash != e.Hash:
+			// The bytes changed, so the filesystem wrote this block since the
+			// sweep, and a fresh write reads fast on any drive. That says
+			// nothing about whether the controller reclaims on read, so it
+			// stays out of that tally.
+			overwritten++
+			_ = s.store.AppendEvent(in.Key, Event{
+				Type: EventOverwritten, Round: lat.RoundSeq, Offset: e.Offset,
+				HealsRef: e.EventID,
+				Params: map[string]any{
+					"was_ms":     e.Latency.Milliseconds(),
+					"now_ms":     worst.Milliseconds(),
 					"offset_mib": e.Offset >> 20,
 				},
 			})
@@ -576,10 +700,10 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 			})
 		}
 		if err := sleepCtx(ctx, s.cfg.ReprobeSpacing.Duration()); err != nil {
-			return healed, stillSlow
+			return healed, stillSlow, overwritten
 		}
 	}
-	return healed, stillSlow
+	return healed, stillSlow, overwritten
 }
 
 // segmentOrder decides what to read and in what order: everything owed from

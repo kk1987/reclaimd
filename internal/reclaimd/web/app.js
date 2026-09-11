@@ -426,6 +426,7 @@ function renderControllers() {
     const val = c.unit === 'h' ? I.fmtDur(c.value * 3600)
       : c.unit === 'ms' ? I.fmtLatency(c.value)
       : c.unit === 'x' ? c.value + '×'
+      : c.unit === 'pct' ? I.fmtPct(c.value)
       : c.unit === 'KiB' ? (c.value >= 1024 ? c.value / 1024 + ' MiB' : c.value + ' KiB')
       : String(c.value);
     /* Formatted values under their base names ({prev} for prev_h), and the raw
@@ -538,10 +539,13 @@ function renderFreshness() {
 
 /* The two refresh commands for this disk, ready to copy.
 
-   This page cannot run a rewrite and does not try to: the daemon holds every
-   device read-only and its unit gives the kernel `block-sd r` to enforce that.
-   So the useful thing a status page can do is assemble the command that the
-   freshness map above it just argued for, with the key and serial filled in.
+   This page cannot run a rewrite and does not try to: there is no refresh
+   route, and under the systemd unit the kernel refuses the daemon a write
+   outright. The daemon's own automatic rewrite is a config-file decision on
+   its machine, covers only the slow blocks, and reports in the decision desk.
+   So the useful thing a status page can do is assemble the whole-drive
+   command that the freshness map above it just argued for, with the key and
+   serial filled in.
 
    That does weaken gate 1, whose point is making somebody look at the device
    instead of pasting a string. Filling in the serial still catches the wrong
@@ -668,6 +672,19 @@ function renderEvents() {
     if (e.type === 'ROUND' && raw.read_mib > 0 && raw.elapsed_s > 0) {
       parts.push(`avgSpeed=${I.fmtSpeed(raw.read_mib / raw.elapsed_s)}`);
     }
+    /* The rewrite events carry a dozen params, and the three that sort first
+       are not the three worth reading. */
+    if (e.type === 'REWRITE') {
+      parts.length = 0;
+      parts.push(`rewritten=${I.fmtNum(raw.rewritten_n || 0)}/${I.fmtNum(raw.candidates_n || 0)}`);
+      if (raw.healed_n != null) parts.push(`healed=${I.fmtNum(raw.healed_n)}`);
+      if (raw.freeze_max_ms != null) parts.push(`freezeMax=${I.fmtLatency(raw.freeze_max_ms)}`);
+      if (raw.code) parts.push(`code=${raw.code}`);
+    } else if (e.type === 'REWRITE_SKIPPED') {
+      parts.length = 0;
+      parts.push(`code=${raw.code || ''}`, `candidates=${I.fmtNum(raw.candidates_n || 0)}`);
+      if (raw.error) parts.push(raw.error);
+    }
     const extra = parts.join(' · ');
     li.innerHTML = `<time datetime="${new Date(e.ts).toISOString()}">${
       I.fmtStamp(new Date(e.ts).getTime() / 1000)}</time>
@@ -705,8 +722,10 @@ function renderLive(live) {
   $('lv-speed').textContent = I.fmtSpeed(live.speed_mibs_n);
   $('lv-drift').textContent = `${live.drift_n}× (${I.fmtLatency(live.lat_p50_ms)} / ${I.fmtLatency(live.base_p50_ms)})`;
   $('lv-eta').textContent = I.fmtDur(live.eta_s);
-  $('lv-found').textContent = I.t('live.found.fmt', {
+  let found = I.t('live.found.fmt', {
     slow: live.slow_n, danger: live.danger_n, defer: live.defer_n });
+  if (live.rewritten_n > 0) found += ' · ' + I.t('live.rewritten', { n: live.rewritten_n });
+  $('lv-found').textContent = found;
   C.svgDutyGauge($('duty-gauge'), live.drift_n || 1, 1.25);
 }
 

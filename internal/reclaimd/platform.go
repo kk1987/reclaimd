@@ -37,6 +37,19 @@ type Platform interface {
 	// Uptime is time since boot, on a clock that setting the wall clock does
 	// not move.
 	Uptime() (time.Duration, error)
+
+	// Mounts lists every filesystem mounted from the disk or a partition of
+	// it, one entry per filesystem. A filesystem bind-mounted in several
+	// places is still one filesystem, and freezing it once is what freezes
+	// all of them.
+	Mounts(p Presence) ([]Mount, error)
+}
+
+// Mount is one filesystem that lives on a managed disk.
+type Mount struct {
+	Point  string // where it is mounted, or one of the places if bound
+	FSType string // "f2fs", "ext4", ...
+	Source string // the device node it was mounted from
 }
 
 // guardedMounts are the mount points whose disks discovery never offers up.

@@ -77,15 +77,23 @@ type RoundSummary struct {
 	// found slow blocks and one that quit after 8% both come out as "slow".
 	Completed bool `json:"completed"`
 
-	BlocksRead     int   `json:"blocks_read_n"`
-	BlocksTotal    int   `json:"blocks_total_n"`
-	SlowBlocks     int   `json:"slow_blocks_n"`
-	DangerBlocks   int   `json:"danger_blocks_n"`
-	MediaErrors    int   `json:"media_errors_n"`
-	Dropouts       int   `json:"dropouts_n"`
-	Deferred       int   `json:"deferred_segments_n"`
-	Healed         int   `json:"healed_n"`
-	StillSlow      int   `json:"still_slow_n"`
+	BlocksRead   int `json:"blocks_read_n"`
+	BlocksTotal  int `json:"blocks_total_n"`
+	SlowBlocks   int `json:"slow_blocks_n"`
+	DangerBlocks int `json:"danger_blocks_n"`
+	MediaErrors  int `json:"media_errors_n"`
+	Dropouts     int `json:"dropouts_n"`
+	Deferred     int `json:"deferred_segments_n"`
+	Healed       int `json:"healed_n"`
+	StillSlow    int `json:"still_slow_n"`
+	// Overwritten is a re-probed block whose content changed between the
+	// sweep and the re-probe. The filesystem wrote it, so it reads fast for
+	// that reason, and it counts as neither healed nor still slow.
+	Overwritten int `json:"overwritten_n,omitempty"`
+	// Rewritten is how many slow blocks this round wrote back in place, and
+	// RewriteHealed how many of those read at normal speed afterwards.
+	Rewritten      int   `json:"rewritten_n,omitempty"`
+	RewriteHealed  int   `json:"rewrite_healed_n,omitempty"`
 	BaselineMicros int64 `json:"baseline_us"`
 	SlowMicros     int64 `json:"slow_threshold_us"`
 	DangerMicros   int64 `json:"danger_threshold_us"`
@@ -108,6 +116,15 @@ const (
 	EventResumed   = "PASS_RESUMED"
 	EventOverride  = "COOLDOWN_OVERRIDDEN"
 	EventStopped   = "PASS_STOPPED"
+	// EventOverwritten is a re-probed block whose bytes changed since the
+	// sweep read it. See RoundSummary.Overwritten.
+	EventOverwritten = "OVERWRITTEN"
+	// EventRewrite records one round's rewrite phase: what it wrote back, how
+	// long the filesystem was frozen for, and what the write-back did to the
+	// blocks. EventRewriteSkipped says why a round that wanted to rewrite did
+	// not, with the reason in its code param.
+	EventRewrite        = "REWRITE"
+	EventRewriteSkipped = "REWRITE_SKIPPED"
 )
 
 // Event is one line of events.jsonl. Params carries the structured values the
