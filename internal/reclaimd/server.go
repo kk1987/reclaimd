@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/disks/{key}/freshness", s.handleFreshness)
 	mux.HandleFunc("POST /api/v1/disks/{key}/enabled", s.handleEnabled)
 	mux.HandleFunc("POST /api/v1/disks/{key}/scan", s.handleScan)
+	mux.HandleFunc("POST /api/v1/disks/{key}/stop", s.handleStop)
 	mux.HandleFunc("GET /api/v1/stream", s.handleStream)
 
 	sub, err := fs.Sub(webFS, "web")
@@ -265,6 +266,7 @@ func (s *Server) views(detail bool) []DiskView {
 		}
 		v.LastOutcome = st.Schedule.LastOutcome
 		v.ScanRequested = st.ScanRequested
+		v.Stopping = st.StopRequested
 		v.BytesWritten = st.Meta.BytesWritten
 		if st.Live != nil {
 			live := *st.Live
@@ -463,6 +465,27 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// reason to go back in early.
 		writeError(w, http.StatusConflict, CodeScanSuppressed,
 			"disk is in the cooldown window the last round opened")
+	case errors.Is(err, ErrNotFound):
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}
+}
+
+// handleStop ends the round running on a disk. It answers once the round has
+// been told, not once it has ended: that takes until the next segment boundary
+// or rest, and the page hears about it from the SCAN_END that follows.
+func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
+	key, ok := diskKey(w, r)
+	if !ok {
+		return
+	}
+	err := s.sup.StopScan(key)
+	switch {
+	case errors.Is(err, ErrNotScanning):
+		writeError(w, http.StatusConflict, CodeNotScanning, "no round is running on this disk")
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no such disk")
 	case err != nil:

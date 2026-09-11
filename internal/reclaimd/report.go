@@ -70,6 +70,10 @@ type DiskView struct {
 	// in between would otherwise offer the button again for a round that is
 	// already on its way.
 	ScanRequested bool `json:"scan_requested"`
+	// Stopping is a Stop the running round has been given and not yet acted on.
+	// Scanning stays true until it has, and a reload in between has to show the
+	// round winding down rather than offer Stop again.
+	Stopping bool `json:"stopping"`
 	// LastOutcome is what the previous round graded, which is what says
 	// whether a cooldown in progress is the six-hour kind or the
 	// twenty-four-hour kind -- and the difference is worth showing before
@@ -96,6 +100,17 @@ type DiskView struct {
 // assessHealth walks the ladder from worst to best and stops at the first rule
 // that fires.
 func assessHealth(rounds []RoundSummary, cfg Config) Health {
+	// A cancelled pass -- stopped from the page, or cut off by a shutdown --
+	// covered part of the disk at best, and judging by it put "clean end to
+	// end" on a drive whose last real pass had dropped off the bus. It is left
+	// out here for the reason the scheduler leaves it out of the interval.
+	var judged []RoundSummary
+	for _, r := range rounds {
+		if r.Outcome != OutcomeCancelled {
+			judged = append(judged, r)
+		}
+	}
+	rounds = judged
 	if len(rounds) == 0 {
 		return Health{Grade: GradeUnknown, Rule: RuleNoData}
 	}

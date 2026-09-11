@@ -34,6 +34,13 @@ type diskState struct {
 	Live     *LiveProgress
 	LastErr  string
 
+	// stop cancels the running round, and is set for exactly as long as
+	// Scanning is. StopRequested says it has been called: the round ends at its
+	// next segment boundary or rest, and until then the page shows it winding
+	// down rather than offer Stop a second time.
+	stop          context.CancelFunc
+	StopRequested bool
+
 	// ScanRequested is somebody pressing Scan now. It carries the round past
 	// the waits that exist for scans nobody asked for -- probation and the
 	// grace after boot -- and is spent when the round starts or the disk goes.
@@ -264,6 +271,11 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 
 	st.Scanning = true
 	st.ScanRequested = false
+	// A context of the round's own, so Stop can end it without ending the
+	// daemon. Made here rather than in runRound so that it exists from the
+	// moment Scanning says a round does.
+	roundCtx, stop := context.WithCancel(ctx)
+	st.stop = stop
 	in := RoundInput{
 		Key:      st.Key,
 		Presence: st.Presence,
@@ -271,16 +283,25 @@ func (s *Supervisor) considerDisk(ctx context.Context, st *diskState, now time.T
 	}
 	s.mu.Unlock()
 
-	go s.runRound(ctx, st, in)
+	go s.runRound(ctx, roundCtx, st, in)
 }
 
-// runRound opens the device, runs one pass and persists everything.
-func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput) {
+// runRound opens the device, runs one pass and persists everything. Opening and
+// warming up happen under the daemon's ctx and only the pass under roundCtx, so a
+// Stop that lands before the pass begins is still taken up by the pass, which is
+// what knows how to end early and what to leave behind.
+func (s *Supervisor) runRound(ctx, roundCtx context.Context, st *diskState, in RoundInput) {
 	defer func() {
 		s.mu.Lock()
 		st.Scanning = false
+		st.StopRequested = false
+		stop := st.stop
+		st.stop = nil
 		st.Live = nil
 		s.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
 		s.notifyChange(st.Key, "SCAN_END")
 	}()
 	// Announced as the disk turns busy, before the device is even opened. The
@@ -319,14 +340,36 @@ func (s *Supervisor) runRound(ctx context.Context, st *diskState, in RoundInput)
 
 	s.logger.Info("scan started", "disk", st.Key, "cursor", in.Schedule.Cursor)
 
-	res, err := s.scanner.Round(ctx, in)
+	res, err := s.scanner.Round(roundCtx, in)
 	if err != nil {
 		s.logger.Error("scan round failed", "disk", st.Key, "error", err)
 		s.setErr(st, err)
 		return
 	}
 
-	s.persistRound(st, res)
+	s.recordRound(st, res)
+}
+
+// recordRound writes down what a round found. A cancelled round that read
+// nothing -- interrupted before its first block, or ended by an error on it --
+// found nothing, and writing it down anyway put an empty pass at the head of
+// the history: a blank latency map, a blank row in the waterfall, a last scan
+// of just now, and a cursor back at zero, since a round that never got past its
+// baseline never set one. All such a round does is move the schedule off now.
+func (s *Supervisor) recordRound(st *diskState, res RoundResult) {
+	if res.Summary.Outcome != OutcomeCancelled || res.Summary.BlocksRead > 0 {
+		s.persistRound(st, res)
+		return
+	}
+	s.mu.Lock()
+	st.Schedule = st.Schedule.Postpone(time.Now())
+	sched := st.Schedule
+	s.mu.Unlock()
+	if err := s.store.SaveSchedule(st.Key, sched); err != nil {
+		s.logger.Error("save schedule", "disk", st.Key, "error", err)
+	}
+	s.logger.Info("scan ended before reading anything", "disk", st.Key,
+		"next_scan_at", sched.NextScanAt)
 }
 
 func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
@@ -522,7 +565,7 @@ func (s *Supervisor) ScanOnce(ctx context.Context, key string, force bool) (Roun
 	if err != nil {
 		return res.Summary, err
 	}
-	s.persistRound(st, res)
+	s.recordRound(st, res)
 	return res.Summary, nil
 }
 
@@ -639,6 +682,47 @@ func (s *Supervisor) RequestScan(key string, force bool) error {
 	case s.wake <- struct{}{}:
 	default: // a tick is already queued, and it will see this request
 	}
+	return nil
+}
+
+// StopScan ends the round running on a disk. The round notices at its next
+// segment boundary, or at once if it is resting; a read already in the kernel
+// finishes either way. It is written down as cancelled -- the outcome a shutdown
+// gives it, which moves nothing the scheduler learns from -- so the next attempt
+// comes an hour later and carries on from where this one stopped. Stopping is
+// not excluding: keeping the disk out of the schedule stays a separate choice.
+func (s *Supervisor) StopScan(key string) error {
+	s.mu.Lock()
+	st, ok := s.disks[key]
+	if !ok {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	if !st.Scanning || st.stop == nil {
+		s.mu.Unlock()
+		return ErrNotScanning
+	}
+	if st.StopRequested {
+		// A second press, from another tab or before the page caught up, is
+		// the same stop rather than another one.
+		s.mu.Unlock()
+		return nil
+	}
+	st.StopRequested = true
+	st.stop()
+	ev := Event{Type: EventStopped}
+	if st.Live != nil {
+		ev.Round = st.Live.RoundSeq
+		ev.Offset = st.Live.PosMiB << 20
+		ev.Params = map[string]any{"done_mib": st.Live.DoneMiB}
+	}
+	s.mu.Unlock()
+
+	if err := s.store.AppendEvent(key, ev); err != nil {
+		s.logger.Error("record stop", "disk", key, "error", err)
+	}
+	s.logger.Info("scan stop requested", "disk", key)
+	s.notifyChange(key, "SCAN_STOPPING")
 	return nil
 }
 

@@ -43,3 +43,21 @@ func TestCooldownNamesWhatActuallyHappened(t *testing.T) {
 		t.Errorf("with no cooldown running the row was %q / %v", row.Reason, row.Value)
 	}
 }
+
+// A cancelled pass read part of the disk at best. Judged by it, the verdict on a
+// drive whose last real pass had just dropped off the bus came out as healthy,
+// clean end to end -- one press of Stop away.
+func TestACancelledPassDoesNotReplaceTheVerdict(t *testing.T) {
+	cfg := mustConfig(t)
+	rounds := []RoundSummary{
+		{Seq: 1, Outcome: OutcomeDropout, Dropouts: 1, BlocksRead: 900, BaselineMicros: 4000},
+		{Seq: 2, Outcome: OutcomeCancelled, BlocksRead: 300, BaselineMicros: 4000},
+	}
+	if got := assessHealth(rounds, cfg); got.Rule != RuleRecentDropout {
+		t.Errorf("after a dropout and a stopped pass the rule was %q, want %q",
+			got.Rule, RuleRecentDropout)
+	}
+	if got := assessHealth(rounds[1:], cfg); got.Rule != RuleNoData {
+		t.Errorf("with only a stopped pass the rule was %q, want %q", got.Rule, RuleNoData)
+	}
+}

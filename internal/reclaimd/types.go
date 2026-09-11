@@ -107,6 +107,7 @@ const (
 	EventAdopted   = "ADOPTED"
 	EventResumed   = "PASS_RESUMED"
 	EventOverride  = "COOLDOWN_OVERRIDDEN"
+	EventStopped   = "PASS_STOPPED"
 )
 
 // Event is one line of events.jsonl. Params carries the structured values the

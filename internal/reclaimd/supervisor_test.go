@@ -341,3 +341,101 @@ func TestRequestScanStartsTheRoundWithoutWaitingForATick(t *testing.T) {
 		return !st.ScanRequested && !st.Meta.AdoptedAt.IsZero() && !st.Scanning
 	})
 }
+
+// Stop ends the round and nothing else. It is refused where there is no round
+// to end, a second press is the same stop rather than another one, and the log
+// says where the pass was when somebody ended it -- otherwise all that is left
+// is a cancelled pass nobody can tell from a shutdown.
+func TestStopEndsTheRunningRoundOnce(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	roundCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	sup := &Supervisor{store: store, logger: quietLogger(), disks: map[string]*diskState{
+		"idle": {Key: "idle", Present: true},
+		"busy": {Key: "busy", Present: true, Scanning: true, stop: stop,
+			Live: &LiveProgress{RoundSeq: 3, PosMiB: 512, DoneMiB: 480}},
+	}}
+
+	if err := sup.StopScan("idle"); !errors.Is(err, ErrNotScanning) {
+		t.Errorf("idle disk: got %v, want ErrNotScanning", err)
+	}
+	if err := sup.StopScan("nosuchdisk"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown key: got %v, want ErrNotFound", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := sup.StopScan("busy"); err != nil {
+			t.Fatalf("press %d: %v", i+1, err)
+		}
+	}
+	if roundCtx.Err() == nil {
+		t.Error("the round's context is still live")
+	}
+	if !sup.disks["busy"].StopRequested {
+		t.Error("the disk does not report that it is stopping")
+	}
+
+	events, err := store.ListEvents("busy", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stops []Event
+	for _, e := range events {
+		if e.Type == EventStopped {
+			stops = append(stops, e)
+		}
+	}
+	if len(stops) != 1 {
+		t.Fatalf("%d stop events, want one", len(stops))
+	}
+	if e := stops[0]; e.Round != 3 || e.Offset != 512<<20 {
+		t.Errorf("stop recorded at round %d, offset %d; want round 3 at 512 MiB", e.Round, e.Offset)
+	}
+}
+
+// A round interrupted before its first block used to be written down like any
+// other: an empty latency map became the latest one, the waterfall grew a blank
+// row, and the cursor went back to zero, because a round that never got past
+// its baseline never set one. Pressing Scan now and then Stop straight after
+// was enough to wipe the map off the page.
+func TestARoundThatReadNothingOnlyMovesTheSchedule(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	before := Schedule{
+		Interval: Duration(240 * time.Hour), NextScanAt: now, Cursor: 96 << 20,
+		RoundSeq: 7, LastRoundAt: now.Add(-48 * time.Hour), LastOutcome: OutcomeClean,
+	}
+	st := &diskState{Key: "d", Present: true, Schedule: before}
+	sup := &Supervisor{cfg: mustConfig(t), store: store, logger: quietLogger(),
+		disks: map[string]*diskState{"d": st}}
+
+	sup.recordRound(st, RoundResult{Summary: RoundSummary{Seq: 8, Outcome: OutcomeCancelled}})
+
+	if rounds, _ := store.ListRounds("d", 10); len(rounds) != 0 {
+		t.Errorf("history grew %v", rounds)
+	}
+	if _, err := store.LoadProfile("d", 0, false); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a latency map was saved: %v", err)
+	}
+	got := st.Schedule
+	if got.Cursor != before.Cursor || got.RoundSeq != before.RoundSeq ||
+		!got.LastRoundAt.Equal(before.LastRoundAt) || got.LastOutcome != before.LastOutcome {
+		t.Errorf("schedule changed beyond its start time: %+v", got)
+	}
+	if got.NextScanAt.Before(now.Add(59 * time.Minute)) {
+		t.Errorf("next attempt in %v; the next tick would start it straight back up",
+			got.NextScanAt.Sub(now))
+	}
+	if saved, err := store.LoadSchedule("d"); err != nil || !saved.NextScanAt.Equal(got.NextScanAt) {
+		t.Errorf("stored schedule %+v (%v) does not match", saved, err)
+	}
+}

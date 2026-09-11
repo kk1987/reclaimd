@@ -57,6 +57,12 @@ export async function requestScan(key, iMeanIt = false) {
   return post(`/disks/${encodeURIComponent(key)}/scan`, { i_mean_it: iMeanIt });
 }
 
+/* Ends the round running on one disk. The answer comes as soon as the round has
+   been told; the round itself ends a moment later, and says so with SCAN_END. */
+export async function stopScan(key) {
+  return post(`/disks/${encodeURIComponent(key)}/stop`, {});
+}
+
 /* Deletes everything the daemon has stored for one disk. The confirmation is
    the UI's job; by the time this is called the decision has been made. */
 export async function forgetDisk(key) {

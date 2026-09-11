@@ -88,6 +88,22 @@ func (f *fakeDisk) ReadBlock(off int64) (time.Duration, error) {
 // reattach models the device coming back 5-6s later under a new name.
 func (f *fakeDisk) reattach() { f.gone = false }
 
+// cancellingDisk ends the round's context after a set number of reads, which is
+// what pressing Stop partway through a pass looks like from inside it.
+type cancellingDisk struct {
+	*fakeDisk
+	after  int
+	cancel context.CancelFunc
+}
+
+func (c *cancellingDisk) ReadBlock(off int64) (time.Duration, error) {
+	d, err := c.fakeDisk.ReadBlock(off)
+	if c.reads == c.after {
+		c.cancel()
+	}
+	return d, err
+}
+
 // seedSuperblockTails degrades the last block of every Nth segment, which is
 // where 90.5% of the extreme-latency blocks actually landed in the forensics:
 // offset mod 32 MiB == 31, the last wordline of an erase block.
@@ -227,6 +243,59 @@ func TestDeferredSegmentsAreEventuallyDrained(t *testing.T) {
 	}
 	if got := len(disk.healed); got != want {
 		t.Errorf("healed %d of %d degraded blocks; the rest were never revisited", got, want)
+	}
+}
+
+// A round cut short by Stop or a shutdown used to leave ground behind: the
+// cursor stepped past the segment it ended in, as it does past one that caused
+// trouble, and owed segments it had not reached dropped out of the debt, since a
+// round saves only what it deferred itself. Interrupted, it has to hand the next
+// round both.
+func TestAnInterruptedRoundResumesWhereItStopped(t *testing.T) {
+	cfg := fastConfig(t)
+	perSeg := cfg.BlocksPerSegment()
+	segBytes := int64(perSeg) * int64(cfg.BlockSize)
+	const blocks = 4096
+	sc, _ := newTestScanner(t, cfg)
+
+	run := func(owed segmentBitmap, stopAfter int) RoundResult {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		disk := &cancellingDisk{fakeDisk: newFakeDisk(blocks, cfg.BlockSize, 10*time.Millisecond),
+			after: cfg.WarmupBlocks + stopAfter, cancel: cancel}
+		sched := NewSchedule(cfg, time.Now())
+		sched.Cursor = 40 * segBytes
+		res, err := sc.Round(ctx, RoundInput{Key: "fake", Dev: disk, Schedule: sched, Deferred: owed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Summary.Outcome != OutcomeCancelled {
+			t.Fatalf("outcome %q, want %q", res.Summary.Outcome, OutcomeCancelled)
+		}
+		return res
+	}
+
+	// Stopped halfway into segment 41: the round finishes that segment and
+	// notices at the start of 42, which it never read.
+	if res := run(nil, perSeg+perSeg/2); res.Cursor != 42*segBytes {
+		t.Errorf("sweeping: next round starts at segment %d, want 42", res.Cursor/segBytes)
+	}
+
+	// Stopped while draining the debt: the rotation has not moved, and the owed
+	// segment it did not get to is still owed.
+	owed := newSegmentBitmap(blocks / perSeg)
+	owed.Set(10)
+	owed.Set(20)
+	res := run(owed, perSeg/2)
+	if res.Cursor != 40*segBytes {
+		t.Errorf("draining: next round starts at segment %d, want 40", res.Cursor/segBytes)
+	}
+	if !res.Deferred.Get(20) {
+		t.Error("segment 20 was owed, never read, and is no longer owed")
+	}
+	if res.Deferred.Get(10) {
+		t.Error("segment 10 was read in full and is still owed")
 	}
 }
 

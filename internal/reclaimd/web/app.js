@@ -218,15 +218,14 @@ function renderDiskbar() {
        stick reports no serial at all. */
     const ident = d.identity?.serial || d.key;
     let status = d.present ? '' : I.t('disk.absent');
-    if (d.scanning) status = I.t('disk.scanning');
+    if (d.scanning) status = I.t(d.stopping ? 'disk.stopping' : 'disk.scanning');
     else if (!d.enabled) status = I.t('disk.disabled');
     else if (!d.adopted) status = I.t('disk.probation');
 
     /* "Scan now" is only an action when a scan is not the current state. It
        used to sit there enabled mid-round, where pressing it set next_scan_at
        to now and nothing else happened -- an control that looks like it worked
-       and did nothing. There is no stop: a round backs off on its own terms,
-       and cutting one short mid-pread is not something a button should offer. */
+       and did nothing. */
     const scanning = d.scanning;
     const requested = d.scan_requested || state.scanSending.has(d.key);
     const scannable = d.present && d.enabled && !scanning && !requested;
@@ -241,6 +240,17 @@ function renderDiskbar() {
        the round would write the history straight back when it ended. */
     const forgettable = !scanning;
 
+    /* Mid-round the maintain switch is a Stop instead. Excluding never ended a
+       pass, only the ones after it, so offering it while one ran offered the
+       wrong thing; the switch comes back with the idle disk. The round takes a
+       moment to act on a stop -- it ends at a segment boundary or a rest, and a
+       read already in the kernel finishes -- so the daemon's stopping holds the
+       button down until it has. */
+    const stopping = scanning && d.stopping;
+    const toggleTitle = stopping ? 'disk.stopWait'
+      : scanning ? 'disk.stopAction'
+      : d.enabled ? 'disk.excludeAction' : 'disk.maintainAction';
+
     el.innerHTML = `
       <div class="row"><span class="dot" data-grade="${d.health?.grade || 'unknown'}"></span>
         <h3 class="wrapy">${esc(name)}</h3></div>
@@ -254,9 +264,9 @@ function renderDiskbar() {
           <button type="button" class="iconbtn" data-scan="${esc(d.key)}"
             title="${esc(I.t(scanTitle))}" ${scannable ? '' : 'disabled'}>▶</button>
           <button type="button" class="iconbtn" data-toggle="${esc(d.key)}"
-            role="switch" aria-checked="${d.enabled}"
-            title="${esc(I.t(d.enabled ? 'disk.excludeAction' : 'disk.maintainAction'))}"
-            >${d.enabled ? '◉' : '◎'}</button>
+            ${scanning ? '' : `role="switch" aria-checked="${d.enabled}"`}
+            title="${esc(I.t(toggleTitle))}" ${stopping ? 'disabled' : ''}
+            >${scanning ? '■' : d.enabled ? '◉' : '◎'}</button>
           <button type="button" class="iconbtn" data-forget="${esc(d.key)}"
             title="${esc(I.t(forgettable ? 'disk.forget' : 'disk.forgetScanning'))}"
             ${forgettable ? '' : 'disabled'}>✕</button>
@@ -299,6 +309,20 @@ function renderDiskbar() {
     });
     el.querySelector('[data-toggle]').addEventListener('click', async (ev) => {
       ev.stopPropagation();
+      if (scanning) {
+        if (stopping) return;
+        ev.currentTarget.disabled = true;
+        try {
+          await api.stopScan(d.key);
+          toast(I.t('toast.stopping'));
+        } catch (err) {
+          /* NOT_SCANNING is the round having ended on its own while the card
+             still showed it; the refresh below catches the page up either way. */
+          if (err.code !== 'NOT_SCANNING') toast(err.message);
+        }
+        await refreshAll();
+        return;
+      }
       try {
         await api.setEnabled(d.key, !d.enabled);
         toast(I.t(d.enabled ? 'toast.disabled' : 'toast.enabled'));

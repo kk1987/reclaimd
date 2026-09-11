@@ -110,11 +110,11 @@ func (s Schedule) Next(sum RoundSummary, now time.Time, cfg Config) Schedule {
 		params["suppress_h"] = hours(cfg.SuppressAfterDropout.Duration())
 
 	case OutcomeCancelled:
-		// Interrupted by shutdown: we learned nothing about the disk, so the
-		// interval must not move in either direction.
+		// Interrupted, by a shutdown or from the page: we learned nothing about
+		// the disk, so the interval must not move in either direction.
 		s.LastOutcome = outcome
 		s.LastRoundAt = now
-		s.NextScanAt = now.Add(time.Hour)
+		s.NextScanAt = now.Add(retryAfterCancel)
 		return s
 
 	case OutcomeExternal:
@@ -178,6 +178,17 @@ func coveredPct(sum RoundSummary) float64 {
 		return 0
 	}
 	return math.Round(float64(sum.BlocksRead)/float64(sum.BlocksTotal)*1000) / 10
+}
+
+// retryAfterCancel is how soon a round that was interrupted is tried again.
+const retryAfterCancel = time.Hour
+
+// Postpone moves the next attempt off now without recording a round. It is for
+// a round that ended before reading a block, which has no outcome to record and
+// no cursor to move, but would otherwise be due again on the very next tick.
+func (s Schedule) Postpone(now time.Time) Schedule {
+	s.NextScanAt = now.Add(retryAfterCancel)
+	return s
 }
 
 // WhatIf is what the UI shows to make the policy arguable rather than magical:

@@ -363,6 +363,11 @@ sweep:
 	res.Summary.Deferred = deferred.Count()
 	res.Summary.BytesRead = int64(blocksRead) * blockSize
 	res.Cursor = nextCursor(in.Schedule.Cursor, cursor, outcome, blockSize, perSeg, blockCount)
+	interrupted := errors.Is(fatal, context.Canceled) || errors.Is(fatal, context.DeadlineExceeded)
+	if interrupted && segIdx < len(order) {
+		res.Cursor = resumeInterrupted(order, segIdx, in.Deferred, deferred,
+			in.Schedule.Cursor, int64(perSeg)*blockSize)
+	}
 	lat.Baseline = base.RoundP50
 	emit(PhaseDone, cursor)
 
@@ -607,6 +612,29 @@ func segmentOrder(segCount int, owed segmentBitmap, cursor, blockSize int64, per
 		}
 	}
 	return order
+}
+
+// resumeInterrupted is where a round that was interrupted -- stopped from the
+// page, or cut off by a shutdown -- leaves the next one to start, and it carries
+// forward the debt the round had not reached. nextCursor steps past the segment
+// a round ended in, which is right when that segment is what ended it. Nothing
+// did here, so stepping past it left the rest of the segment unread for a whole
+// rotation; and owed segments still ahead dropped out of the debt, because the
+// bitmap a round saves holds only what it deferred itself.
+func resumeInterrupted(order []int, at int, owed, deferred segmentBitmap,
+	prevCursor, segBytes int64) int64 {
+
+	for _, seg := range order[at:] {
+		if owed.Get(seg) {
+			deferred.Set(seg)
+		}
+	}
+	// Owed segments are read first, so still being among them means the
+	// rotation itself has not moved yet.
+	if owed.Get(order[at]) {
+		return prevCursor
+	}
+	return int64(order[at]) * segBytes
 }
 
 // nextCursor advances the rotating start point for the following round.

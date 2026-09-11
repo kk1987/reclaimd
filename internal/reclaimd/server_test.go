@@ -117,3 +117,25 @@ func TestFleetListReportsAScanRequestNotYetStarted(t *testing.T) {
 		t.Fatalf("after the request: %+v, want scan_requested", v)
 	}
 }
+
+// A Stop takes the round a moment to act on, and a reload in that moment has to
+// show the round winding down rather than offer Stop again.
+func TestFleetListReportsARoundThatIsStopping(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	sup := &Supervisor{store: store, logger: quietLogger(), disks: map[string]*diskState{
+		"usb-a": {Key: "usb-a", Present: true, Scanning: true, stop: func() {}},
+	}}
+	s := NewServer(mustConfig(t), store, sup, quietLogger())
+
+	if err := sup.StopScan("usb-a"); err != nil {
+		t.Fatal(err)
+	}
+	if v := s.views(false); len(v) != 1 || !v[0].Scanning || !v[0].Stopping {
+		t.Fatalf("after Stop: %+v, want scanning and stopping", v)
+	}
+}
