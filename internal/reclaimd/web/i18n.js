@@ -6,7 +6,9 @@ export const DICT = {
   zh: {
     'app.tagline': 'USB 闪存保持力维护',
     'a11y.skip': '跳到正文',
-    'a11y.langGroup': '语言', 'a11y.diskbar': '磁盘列表',
+    'a11y.langGroup': '语言', 'a11y.diskbar': '磁盘列表', 'a11y.unitGroup': '容量单位',
+    'units.mib': '二进制：1 MiB = 1024² 字节',
+    'units.mb': '十进制：1 MB = 1000² 字节，盘上标的容量和速度用的就是它',
     'verdict.eyebrow': '当前状态',
     'kpi.next': '下次扫描', 'kpi.last': '上次扫描',
     'kpi.interval': '当前间隔', 'kpi.healed': '累计治愈块',
@@ -132,7 +134,9 @@ export const DICT = {
   en: {
     'app.tagline': 'USB flash retention upkeep',
     'a11y.skip': 'Skip to content',
-    'a11y.langGroup': 'Language', 'a11y.diskbar': 'Disks',
+    'a11y.langGroup': 'Language', 'a11y.diskbar': 'Disks', 'a11y.unitGroup': 'Byte units',
+    'units.mib': 'Binary: 1 MiB = 1024² bytes',
+    'units.mb': 'Decimal: 1 MB = 1000² bytes, the unit a drive’s label and rated speed use',
     'verdict.eyebrow': 'Current state',
     'kpi.next': 'Next scan', 'kpi.last': 'Last scan',
     'kpi.interval': 'Interval', 'kpi.healed': 'Blocks healed',
@@ -344,15 +348,44 @@ export function fmtLatency(ms) {
   return ms < 100 ? NF1.format(ms) + ' ms' : NF0.format(Math.round(ms)) + ' ms';
 }
 
-/* IEC units, untranslated in both languages: GiB reads as GiB to a Chinese
-   audience too, and inventing a translation would only add ambiguity. */
-export function fmtMiB(mib) {
-  if (mib == null) return '—';
-  if (mib >= 1024) return NF1.format(mib / 1024) + ' GiB';
-  return NF0.format(mib) + ' MiB';
+/* Byte units, switched for the whole page at once. Binary (MiB, GiB) is the
+   default because it is what the daemon counts in; decimal (MB, GB) is what a
+   drive's label and its rated speed are printed in. The powers of two that
+   describe the hardware itself -- a 32 MiB segment, the kernel's per-command
+   limit in KiB -- stay binary either way, since in decimal they are only
+   awkward numbers for the same thing. */
+let UNITS = 'mib';
+try { if (localStorage.getItem('rcl.units') === 'mb') UNITS = 'mb'; } catch (e) {}
+
+export function units() { return UNITS; }
+
+export function setUnits(next) {
+  if (next !== 'mib' && next !== 'mb') return;
+  UNITS = next;
+  try { localStorage.setItem('rcl.units', UNITS); } catch (e) {}
 }
 
-export function fmtBytes(b) { return fmtMiB(b / (1024 * 1024)); }
+/* Unit symbols are untranslated in both languages: GiB reads as GiB to a
+   Chinese audience too, and inventing a translation would only add ambiguity. */
+export function fmtBytes(b) {
+  if (b == null) return '—';
+  const k = UNITS === 'mb' ? 1000 : 1024;
+  const m = b / (k * k);
+  if (m >= k) return NF1.format(m / k) + (UNITS === 'mb' ? ' GB' : ' GiB');
+  return NF0.format(m) + (UNITS === 'mb' ? ' MB' : ' MiB');
+}
+
+export function fmtMiB(mib) { return mib == null ? '—' : fmtBytes(mib * 1024 * 1024); }
+
+export function fmtSpeed(mibs) {
+  if (mibs == null || !isFinite(mibs)) return '—';
+  return UNITS === 'mb' ? NF1.format(mibs * 1.048576) + ' MB/s' : NF1.format(mibs) + ' MiB/s';
+}
+
+/* What a whole-disk axis is labelled in, and how many bytes one of it is. */
+export function gigUnit() {
+  return UNITS === 'mb' ? { bytes: 1e9, label: 'GB' } : { bytes: 1024 ** 3, label: 'GiB' };
+}
 
 /* Durations are hand-rolled rather than using Intl.DurationFormat: it is too
    new to rely on, and we want full control over the two-unit compact form. */

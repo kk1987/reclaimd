@@ -87,6 +87,16 @@ function wireChrome() {
     });
   });
 
+  document.querySelectorAll('[data-units]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.units === I.units()));
+    b.addEventListener('click', () => {
+      I.setUnits(b.dataset.units);
+      document.querySelectorAll('[data-units]').forEach((o) =>
+        o.setAttribute('aria-pressed', String(o.dataset.units === I.units())));
+      renderAll(); // like a language switch: from the payloads already in hand
+    });
+  });
+
   setTheme(); // three-state cycle: a label that only says "toggle" says nothing
   $('theme-btn').addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme');
@@ -429,11 +439,16 @@ function renderMap() {
   });
   $('map-legend').innerHTML = C.legendHTML(p.baselineMs);
 
-  const totalGiB = (p.count * p.blockSize) / (1 << 30);
-  const ticks = [];
-  for (let i = 0; i <= 7; i++) ticks.push(Math.round((totalGiB * i) / 7));
-  $('map-axis').innerHTML = ticks.map((g, i) =>
-    `<span>${g}${i === ticks.length - 1 ? ' GiB' : ''}</span>`).join('');
+  $('map-axis').innerHTML = diskAxisHTML(p);
+}
+
+/* Eight ticks across the whole disk, in whichever gigabyte the page counts in,
+   with the unit on the last one only. */
+function diskAxisHTML(p) {
+  const { bytes, label } = I.gigUnit();
+  const total = (p.count * p.blockSize) / bytes;
+  return [0, 1, 2, 3, 4, 5, 6, 7].map((i) =>
+    `<span>${Math.round((total * i) / 7)}${i === 7 ? ' ' + label : ''}</span>`).join('');
 }
 
 function renderStack() {
@@ -475,11 +490,7 @@ function renderFreshness() {
      <span class="mono">${counts[b]}</span></span>`).join('');
 
   const p = state.profile;
-  if (p) {
-    const totalGiB = (p.count * p.blockSize) / (1 << 30);
-    $('fresh-axis').innerHTML = [0, 1, 2, 3, 4, 5, 6, 7].map((i, n, a) =>
-      `<span>${Math.round((totalGiB * i) / 7)}${i === 7 ? ' GiB' : ''}</span>`).join('');
-  }
+  if (p) $('fresh-axis').innerHTML = diskAxisHTML(p);
 }
 
 function renderStructure() {
@@ -563,7 +574,7 @@ function renderLive(live) {
   $('live-fill').style.width = pct.toFixed(1) + '%';
   sec.querySelector('.bar').setAttribute('aria-valuenow', pct.toFixed(0));
   $('lv-pos').textContent = `${I.fmtMiB(live.pos_mib)} / ${I.fmtMiB(live.total_mib)}`;
-  $('lv-speed').textContent = I.fmtNum(live.speed_mibs_n, 1) + ' MiB/s';
+  $('lv-speed').textContent = I.fmtSpeed(live.speed_mibs_n);
   $('lv-drift').textContent = `${live.drift_n}× (${I.fmtLatency(live.lat_p50_ms)} / ${I.fmtLatency(live.base_p50_ms)})`;
   $('lv-eta').textContent = I.fmtDur(live.eta_s);
   $('lv-found').textContent = I.t('live.found.fmt', {
