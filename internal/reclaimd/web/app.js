@@ -103,7 +103,47 @@ async function boot() {
   scheduleRedraw();
 }
 
+/* The panels below the verdict are grouped under four tabs. Everything that
+   says how the disk is doing right now stays above them; the tabs hold the
+   maps of it, the reasoning about it, its history and the things that can be
+   done to it. The choice is kept per browser, since a page left open on a
+   router is usually left on the same tab. */
+const TABS = ['maps', 'analysis', 'history', 'actions'];
+
+function wireTabs() {
+  let cur = TABS[0];
+  try {
+    const saved = localStorage.getItem('rcl.tab');
+    if (TABS.includes(saved)) cur = saved;
+  } catch (e) {}
+  const btns = [...document.querySelectorAll('.tabs [data-tab]')];
+  const show = (name, focus) => {
+    for (const b of btns) {
+      const on = b.dataset.tab === name;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+      if (on && focus) b.focus();
+    }
+    document.querySelectorAll('.tabpanel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+    try { localStorage.setItem('rcl.tab', name); } catch (e) {}
+    /* A canvas drawn while its tab was hidden had no width to size itself
+       by and used a fallback, so the strips are redrawn at their real size. */
+    scheduleRedraw();
+  };
+  btns.forEach((b, i) => {
+    b.addEventListener('click', () => show(b.dataset.tab));
+    b.addEventListener('keydown', (ev) => {
+      const step = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      ev.preventDefault();
+      show(btns[(i + step + btns.length) % btns.length].dataset.tab, true);
+    });
+  });
+  show(cur);
+}
+
 function wireChrome() {
+  wireTabs();
   setConn(); // label the initial idle dot: it means nothing until it has one
   document.querySelectorAll('[data-lang]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.lang === I.lang()));

@@ -82,11 +82,14 @@
     </figure>
   </section>
 
-  <section id="adaptive" class="card">
-    <h2 data-i18n="adaptive.title"></h2>
-    <p class="lede" data-i18n="adaptive.lede"></p>
-    <div id="ctrl-rows" class="ruled"></div>
-  </section>
+  <div class="tabs" role="tablist" data-i18n-attr="aria-label:a11y.tabs">
+    <button type="button" role="tab" id="tab-maps" data-tab="maps" aria-controls="panel-maps" data-i18n="tab.maps"></button>
+    <button type="button" role="tab" id="tab-analysis" data-tab="analysis" aria-controls="panel-analysis" data-i18n="tab.analysis"></button>
+    <button type="button" role="tab" id="tab-history" data-tab="history" aria-controls="panel-history" data-i18n="tab.history"></button>
+    <button type="button" role="tab" id="tab-actions" data-tab="actions" aria-controls="panel-actions" data-i18n="tab.actions"></button>
+  </div>
+
+  <div class="tabpanel" id="panel-maps" role="tabpanel" aria-labelledby="tab-maps" data-panel="maps">
 
   <section id="map" class="card">
     <h2 data-i18n="map.title"></h2>
@@ -98,6 +101,15 @@
     <div class="axis mono" id="map-axis"></div>
     <div class="legend" id="map-legend"></div>
     <p class="cap" data-i18n="map.note"></p>
+  </section>
+
+  <section id="fresh" class="card" hidden>
+    <h2 data-i18n="fresh.title"></h2>
+    <p class="headline" id="fresh-oldest"></p>
+    <canvas id="fresh-canvas" class="thin"></canvas>
+    <div class="axis mono" id="fresh-axis"></div>
+    <div class="legend" id="fresh-legend"></div>
+    <p class="cap" data-i18n="fresh.caveat"></p>
   </section>
 
   <section id="stack" class="card" hidden>
@@ -116,14 +128,50 @@
     <div class="legend" id="stack-legend"></div>
   </section>
 
-  <section id="fresh" class="card" hidden>
-    <h2 data-i18n="fresh.title"></h2>
-    <p class="headline" id="fresh-oldest"></p>
-    <canvas id="fresh-canvas" class="thin"></canvas>
-    <div class="axis mono" id="fresh-axis"></div>
-    <div class="legend" id="fresh-legend"></div>
-    <p class="cap" data-i18n="fresh.caveat"></p>
+  </div>
+
+  <div class="tabpanel" id="panel-analysis" role="tabpanel" aria-labelledby="tab-analysis" data-panel="analysis" hidden>
+
+  <section id="adaptive" class="card">
+    <h2 data-i18n="adaptive.title"></h2>
+    <p class="lede" data-i18n="adaptive.lede"></p>
+    <div id="ctrl-rows" class="ruled"></div>
   </section>
+
+  <section id="structure" class="card" hidden>
+    <h2 data-i18n="structure.title"></h2>
+    <div class="two">
+      <figure>
+        <svg id="mod-hist" viewBox="0 0 420 190" role="img"
+          data-i18n-attr="aria-label:structure.aria"></svg>
+        <figcaption class="cap" id="mod-caption"></figcaption>
+      </figure>
+      <div>
+        <h3 data-i18n="structure.stubborn"></h3>
+        <p class="cap" data-i18n="structure.stubbornNote"></p>
+        <ol id="stubborn" class="stub"></ol>
+      </div>
+    </div>
+  </section>
+
+  </div>
+
+  <div class="tabpanel" id="panel-history" role="tabpanel" aria-labelledby="tab-history" data-panel="history" hidden>
+
+  <section id="trends" class="card" hidden>
+    <h2 data-i18n="trends.title"></h2>
+    <svg id="trend-svg" viewBox="0 0 720 260" role="img" data-i18n-attr="aria-label:trends.aria"></svg>
+    <p class="cap" data-i18n="trends.note"></p>
+  </section>
+
+  <section id="events" class="card">
+    <h2 data-i18n="events.title"></h2>
+    <ol id="event-list" class="log"></ol>
+  </section>
+
+  </div>
+
+  <div class="tabpanel" id="panel-actions" role="tabpanel" aria-labelledby="tab-actions" data-panel="actions" hidden>
 
   <section id="speed" class="card" hidden>
     <h2 data-i18n="speed.title"></h2>
@@ -146,32 +194,7 @@
     <p class="cap" data-i18n="rewrite.gates"></p>
   </section>
 
-  <section id="structure" class="card" hidden>
-    <h2 data-i18n="structure.title"></h2>
-    <div class="two">
-      <figure>
-        <svg id="mod-hist" viewBox="0 0 420 190" role="img"
-          data-i18n-attr="aria-label:structure.aria"></svg>
-        <figcaption class="cap" id="mod-caption"></figcaption>
-      </figure>
-      <div>
-        <h3 data-i18n="structure.stubborn"></h3>
-        <p class="cap" data-i18n="structure.stubbornNote"></p>
-        <ol id="stubborn" class="stub"></ol>
-      </div>
-    </div>
-  </section>
-
-  <section id="trends" class="card" hidden>
-    <h2 data-i18n="trends.title"></h2>
-    <svg id="trend-svg" viewBox="0 0 720 260" role="img" data-i18n-attr="aria-label:trends.aria"></svg>
-    <p class="cap" data-i18n="trends.note"></p>
-  </section>
-
-  <section id="events" class="card">
-    <h2 data-i18n="events.title"></h2>
-    <ol id="event-list" class="log"></ol>
-  </section>
+  </div>
 </main>
 
 <footer>
