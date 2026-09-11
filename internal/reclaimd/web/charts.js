@@ -175,17 +175,21 @@ export function drawFreshness(canvas, ages, intervalS, opts = {}) {
 
   const now = Date.now() / 1000;
   const iv = intervalS > 0 ? intervalS : 7 * 86400;
+  const bucket = (t) => {
+    if (t === 0) return 3;
+    const age = now - t;
+    return age > iv * 2 ? 3 : age > iv ? 2 : age > iv / 2 ? 1 : 0;
+  };
+  /* The legend counts segments, as the headline above it does. It used to
+     count the columns drawn, and on a disk with more segments than the canvas
+     has pixels 3684 never-read segments showed up in the legend as 994. */
   const counts = [0, 0, 0, 0];
+  for (const t of ages) counts[bucket(t)]++;
   for (let x = 0; x < W; x++) {
     const lo = Math.floor((x * ages.length) / W);
     const hi = Math.max(lo + 1, Math.floor(((x + 1) * ages.length) / W));
-    let worst = -1; // oldest wins: the stalest segment is the risk
-    for (let i = lo; i < hi && i < ages.length; i++) {
-      const age = ages[i] === 0 ? Infinity : now - ages[i];
-      if (worst < 0 || age > worst) worst = age;
-    }
-    const b = worst === Infinity ? 3 : worst > iv * 2 ? 3 : worst > iv ? 2 : worst > iv / 2 ? 1 : 0;
-    counts[b]++;
+    let b = 0; // the stalest segment in the column is the one at risk
+    for (let i = lo; i < hi && i < ages.length; i++) b = Math.max(b, bucket(ages[i]));
     ctx.fillStyle = pal.fresh[b];
     ctx.fillRect(x, 0, 1, H);
   }

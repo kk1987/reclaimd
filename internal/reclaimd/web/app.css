@@ -41,8 +41,12 @@
      derived number must never pass for an observed one. */
   --measured:#0b6b70; --est:#8a5d06;
 
-  --sans:"IBM Plex Sans","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
-  --cond:"IBM Plex Sans Condensed","IBM Plex Sans","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
+  /* Latin faces come before the CJK ones, and not only Plex: where Plex is not
+     installed a CJK face took over the English text and set its punctuation
+     full width, so "drive’s" had a character-wide gap in it. Chinese still
+     falls through to the CJK faces, the only ones here that carry it. */
+  --sans:"IBM Plex Sans",-apple-system,"Segoe UI","Noto Sans",Roboto,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",-apple-system,"Segoe UI","Noto Sans",Roboto,"Helvetica Neue",Arial,"PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 
   --strip-h:46px; --radius:4px; --maxw:1080px;

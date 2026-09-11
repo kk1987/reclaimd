@@ -47,7 +47,7 @@ export const DICT = {
     'reason.SCAN_DANGER_TIGHTEN': '出现接近卡死的块，间隔 ×{factor} 并冷却 {suppress}。',
     'reason.SCAN_DROPOUT_HALVE': '发生掉线，间隔 ×{factor} 并冷却 {suppress}。',
     'reason.SCAN_NEUTRAL_RETRY': '这一轮没测到什么，间隔不动。',
-    'reason.SCAN_RESUME_PARTIAL': '这趟只读到 {covered_pct}% 就熔断了，不算一整趟：{resume_h} 小时后从断点续，而不是等满 {value_h} 小时。',
+    'reason.SCAN_RESUME_PARTIAL': '这趟只读到 {covered_pct}% 就熔断了，不算一整趟：{resume}后从断点续，而不是等满 {value}。',
     'reason.CLOCK_REBASED': '时钟同步后重算了下次时间。',
     'reason.ONE_SCSI_COMMAND': '内核给这支盘的单条命令上限是 {max_sectors_kb} KiB，所以一次读恰好是一条 SCSI 命令。',
     'reason.SET_IN_CONFIG': '配置里写死的值；内核给这支盘的单条命令上限是 {max_sectors_kb} KiB。',
@@ -78,6 +78,7 @@ export const DICT = {
 
     'fresh.title': '新鲜度地图',
     'fresh.oldest': '最老的一块数据已经 {age} 没被读过',
+    'fresh.oldestRead': '读到过的数据里，最老的一块已经 {age} 没被读过',
     'fresh.never': '还有 {n} 段从未被读到过',
     'fresh.caveat': '这只统计本工具读到的时间。',
     'fresh.legend.0': '刚读过', 'fresh.legend.1': '正常老化',
@@ -176,7 +177,7 @@ export const DICT = {
     'reason.SCAN_DANGER_TIGHTEN': 'Near-hang seen; interval ×{factor} and a {suppress} cooldown.',
     'reason.SCAN_DROPOUT_HALVE': 'Dropout; interval ×{factor} and a {suppress} cooldown.',
     'reason.SCAN_NEUTRAL_RETRY': 'Nothing was measured this pass, so the interval stays put.',
-    'reason.SCAN_RESUME_PARTIAL': 'This pass stopped at {covered_pct}% of the disk, so it does not count as a full one: resuming from the cursor in {resume_h}h rather than the full {value_h}h.',
+    'reason.SCAN_RESUME_PARTIAL': 'This pass stopped at {covered_pct}% of the disk, so it does not count as a full one: resuming from the cursor in {resume} rather than the full {value}.',
     'reason.CLOCK_REBASED': 'Recomputed after the clock was corrected.',
     'reason.ONE_SCSI_COMMAND': 'The kernel sends this drive at most {max_sectors_kb} KiB per command, so one read is exactly one SCSI command.',
     'reason.SET_IN_CONFIG': 'Set by hand in the config; the kernel sends this drive at most {max_sectors_kb} KiB per command.',
@@ -207,6 +208,7 @@ export const DICT = {
 
     'fresh.title': 'Freshness map',
     'fresh.oldest': 'The stalest data has gone {age} without a read',
+    'fresh.oldestRead': 'Of what has been read, the stalest has gone {age} without a read',
     'fresh.never': '{n} segments have never been read',
     'fresh.caveat': 'This counts reads by this tool only.',
     'fresh.legend.0': 'just read', 'fresh.legend.1': 'aging normally',

@@ -420,10 +420,17 @@ function renderControllers() {
   for (const c of state.detail?.controllers || []) {
     const el = document.createElement('details');
     el.className = 'ctrl';
+    /* The read size is a power of two and stays binary whatever the page's
+       unit: in decimal it would only be an awkward number for the same thing. */
     const val = c.unit === 'h' ? I.fmtDur(c.value * 3600)
       : c.unit === 'ms' ? I.fmtLatency(c.value)
-      : c.unit === 'x' ? c.value + '×' : String(c.value);
-    const why = I.t('reason.' + c.reason, I.fmtParams(c.params));
+      : c.unit === 'x' ? c.value + '×'
+      : c.unit === 'KiB' ? (c.value >= 1024 ? c.value / 1024 + ' MiB' : c.value + ' KiB')
+      : String(c.value);
+    /* Formatted values under their base names ({prev} for prev_h), and the raw
+       ones under their own keys for a template that writes the unit itself, as
+       {covered_pct}% and {max_sectors_kb} KiB do. */
+    const why = I.t('reason.' + c.reason, { ...c.params, ...I.fmtParams(c.params) });
 
     let body = '';
     if (c.formula) body += `<div><span class="cap">${I.t('ctrl.formula')}</span> <code>${esc(c.formula)}</code></div>`;
@@ -512,8 +519,12 @@ function renderFreshness() {
   const oldest = state.detail?.oldest_data_s;
   const never = Array.prototype.reduce.call(state.freshness, (n, v) => n + (v === 0 ? 1 : 0), 0);
   /* The single most honest measure of what this tool is protecting, so it gets
-     headline size rather than a row in a table. */
-  let head = oldest ? I.t('fresh.oldest', { age: I.fmtDur(oldest) }) : '';
+     headline size rather than a row in a table. The age leaves out segments
+     never read at all, and while any remain the headline says so: "the stalest
+     data" next to a legend of thousands of stale segments read as a
+     contradiction. */
+  let head = oldest ? I.t(never > 0 ? 'fresh.oldestRead' : 'fresh.oldest',
+    { age: I.fmtDur(oldest) }) : '';
   if (never > 0) head += `<span class="est"> · ${I.t('fresh.never', { n: never })}</span>`;
   $('fresh-oldest').innerHTML = head;
 
