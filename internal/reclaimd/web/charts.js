@@ -350,9 +350,9 @@ export function svgSpeedBars(el, res, sizeBytes) {
   const max = Math.max(...regions.map((r) => r.mibs), 0.001);
   const x = (off) => L + bw / 2 + ((off + (res.regions[0]?.bytes || 0) / 2) / sizeBytes) * (W - L - R - bw);
   const parts = [];
+  /* Every bar carries its own value, so the axis only needs its zero. A top
+     label would sit under the first bar's value. */
   parts.push(`<line x1="${L}" y1="${T + rowH}" x2="${W - R}" y2="${T + rowH}" stroke="var(--line)" stroke-width="1"/>`);
-  parts.push(`<text x="${L - 8}" y="${T + 6}" text-anchor="end" font-size="10"
-    font-family="var(--mono)" fill="var(--ink-3)">${fmtSpeed(max)}</text>`);
   parts.push(`<text x="${L - 8}" y="${T + rowH}" text-anchor="end" font-size="10"
     font-family="var(--mono)" fill="var(--ink-3)">0</text>`);
   for (const r of regions) {
