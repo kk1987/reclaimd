@@ -99,7 +99,7 @@ export const DICT = {
     'structure.streak': '连续 {n} 轮',
 
     'speed.title': '读速测试',
-    'speed.lede': '在盘上均匀取 {n} 处，每处顺序全速读 {mib}，不限速也不休息，总共约 {budget}。这类盘的读速跟着数据年龄走：刚写的数据能跑到标称速度，放久了的只剩零头，所以各处的差距就是数据新旧的差距。',
+    'speed.lede': '每次测试在盘上均匀取 {n} 处，各顺序读 {mib}。',
     'speed.run': '开始测速', 'speed.running': '测速中…',
     'speed.none': '还没测过。',
     'speed.headline': '平均 {avg} · 最慢 {min}（{minAt} 处）· 最快 {max}（{maxAt} 处）',
@@ -249,7 +249,7 @@ export const DICT = {
     'stack.diffNote': 'Diff mode hides cells that were normal in both passes. Otherwise the ordinary jitter of a healthy drive would fill the chart. "Better" here is inferred. Healing confirmed by a re-probe is listed in the event log.',
 
     'speed.title': 'Read speed',
-    'speed.lede': '{n} stretches spread across the drive, {mib} each, read sequentially flat out with no rate limit and no rests, about {budget} in all. On these drives read speed follows the age of the data: a fresh write reads at the rated speed and an old one at a fraction of it, so the spread between positions is the spread in data age.',
+    'speed.lede': 'Each test performs {n} sequential {mib} reads spread across the drive.',
     'speed.run': 'Run speed test', 'speed.running': 'Testing…',
     'speed.none': 'Not tested yet.',
     'speed.headline': 'average {avg} · slowest {min} at {minAt} · fastest {max} at {maxAt}',

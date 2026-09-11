@@ -556,7 +556,6 @@ function renderSpeed() {
   $('speed-lede').textContent = I.t('speed.lede', {
     n: d.speed_regions_n || 8,
     mib: I.fmtMiB(d.speed_region_mib || 64),
-    budget: I.fmtDur(d.speed_budget_s || 20),
   });
 
   const btn = $('speed-btn');
