@@ -371,7 +371,7 @@ function renderDiskbar() {
       <div class="row mono" style="font-size:11.5px;color:var(--ink-3)">
         <span title="${esc(I.t('disk.identBy'))}">${esc(ident)}</span></div>
       <div class="row"><span class="mono" style="font-size:11.5px">${
-        d.next_scan_ts ? I.fmtRel(d.next_scan_ts) : '—'}</span>
+        d.next_scan_ts && !scanning ? I.fmtRel(d.next_scan_ts) : '—'}</span>
         <span style="display:flex;gap:4px">
           <button type="button" class="iconbtn" data-scan="${esc(d.key)}"
             title="${esc(I.t(scanTitle))}" ${scannable ? '' : 'disabled'}>▶</button>
@@ -477,7 +477,15 @@ function renderVerdict() {
      question is "what should I do about it". */
   $('verdict-why').textContent = I.t('rule.' + h.rule, I.fmtParams(h.params));
 
-  $('kpi-next').textContent = d.next_scan_ts ? I.fmtRel(d.next_scan_ts) : '—';
+  /* While a round runs the schedule's next time is the one that started it,
+     already in the past, so the tile says when this pass began instead. */
+  if (d.scanning) {
+    $('kpi-next-k').textContent = I.t('kpi.started');
+    $('kpi-next').textContent = d.live ? I.fmtRel(Date.now() / 1000 - d.live.elapsed_s) : '—';
+  } else {
+    $('kpi-next-k').textContent = I.t('kpi.next');
+    $('kpi-next').textContent = d.next_scan_ts ? I.fmtRel(d.next_scan_ts) : '—';
+  }
   $('kpi-last').textContent = d.last_scan_ts ? I.fmtRel(d.last_scan_ts) : '—';
   const iv = (d.controllers || []).find((c) => c.id === 'scan_interval');
   $('kpi-interval').textContent = iv ? I.fmtDur(iv.value * 3600) : '—';
@@ -898,9 +906,11 @@ function renderLive(live) {
      first progress frame comes later, after the warm-up reads and the baseline
      sample (256 blocks by default, up to 256 MiB), and waiting for it would
      leave the page sitting on a scanning disk with no panel until then. */
-  if (!live && !state.detail?.scanning) { sec.hidden = true; return; }
+  if (!live && !state.detail?.scanning) { clearTimeout(etaTimer); sec.hidden = true; return; }
   sec.hidden = false;
   if (!live) {
+    clearTimeout(etaTimer);
+    $('lv-eta-k').textContent = I.t('live.eta');
     $('live-fill').style.width = '0%';
     sec.querySelector('.bar').setAttribute('aria-valuenow', '0');
     for (const id of ['lv-pos', 'lv-speed', 'lv-drift', 'lv-eta', 'lv-found']) $(id).textContent = '—';
@@ -913,12 +923,31 @@ function renderLive(live) {
   $('lv-pos').textContent = `${I.fmtMiB(live.pos_mib)} / ${I.fmtMiB(live.total_mib)}`;
   $('lv-speed').textContent = I.fmtSpeed(live.speed_mibs_n);
   $('lv-drift').textContent = `${live.drift_n}× (${I.fmtLatency(live.lat_p50_ms)} / ${I.fmtLatency(live.base_p50_ms)})`;
-  $('lv-eta').textContent = I.fmtDur(live.eta_s);
+  renderLiveEta(live);
   let found = I.t('live.found.fmt', {
     slow: live.slow_n, danger: live.danger_n, defer: live.defer_n });
   if (live.rewritten_n > 0) found += ' · ' + I.t('live.rewritten', { n: live.rewritten_n });
   $('lv-found').textContent = found;
   C.svgDutyGauge($('duty-gauge'), live.drift_n || 1, 1.25);
+}
+
+/* The sweep's ETA runs out with the sweep. After it the round waits the
+   re-probe delay out, ten minutes by default, and then reads its slow blocks
+   again, and the panel says so. The wait counts down on its own: the daemon
+   sends no frames while it sleeps. */
+let etaTimer = null;
+function renderLiveEta(live) {
+  clearTimeout(etaTimer);
+  const k = $('lv-eta-k'), v = $('lv-eta');
+  if (live.phase === 'REPROBE') {
+    k.textContent = I.t('live.reprobeIn');
+    const left = (live.reprobe_at_ts || 0) - Date.now() / 1000;
+    v.textContent = left > 0 ? I.fmtDur(left) : I.t('live.reprobing');
+    if (left > 0) etaTimer = setTimeout(() => renderLiveEta(live), 1000);
+    return;
+  }
+  k.textContent = I.t('live.eta');
+  v.textContent = live.phase === 'REWRITE' ? I.t('live.rewriting') : I.fmtDur(live.eta_s);
 }
 
 function onProgress(p) {
@@ -971,6 +1000,7 @@ async function loadLive(seq) {
   if (!state.freshness) {
     state.freshness = new Uint32Array(Math.ceil(prof.values.length / blocksPerSegment(prof)));
   }
+  freshenFromProfile(prof);
   const queued = state.liveQueue;
   state.liveQueue = [];
   for (const b of queued) applyBlocks(b);
@@ -982,6 +1012,24 @@ function dropLive() {
   state.liveProfile = null;
   state.liveQueue = [];
   state.liveFrameN = null;
+}
+
+/* Every segment the running round has read so far, stamped as just read.
+   The snapshot already holds those reads, and the freshness the daemon
+   serves does not: it is stamped when the round ends. Without this a page
+   opened, or reloaded, mid-round showed everything behind the cursor as
+   never read until the round was over. */
+function freshenFromProfile(prof) {
+  const ages = state.freshness;
+  if (!ages?.length) return;
+  const perSeg = Math.ceil(prof.values.length / ages.length);
+  const now = Math.floor(Date.now() / 1000);
+  for (let seg = 0; seg < ages.length; seg++) {
+    const lo = seg * perSeg, hi = Math.min(lo + perSeg, prof.values.length);
+    for (let i = lo; i < hi; i++) {
+      if (prof.values[i] < LAT_ERROR) { ages[seg] = now; break; }
+    }
+  }
 }
 
 /* Blocks come as flat (index, code) pairs. A real reading also freshens the

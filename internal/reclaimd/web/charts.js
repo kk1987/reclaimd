@@ -59,8 +59,10 @@ export function drawStrip(canvas, prof, opts = {}) {
   if (!prof) return null;
 
   const bins = downsampleMax(prof.values, W, prof.baselineMs);
-  const heatH = Math.round(H * 0.7);
-  const densH = H - heatH;
+  /* The share of slow blocks in a column is a bar up from the bottom, over
+     the colour, at most this tall. It used to have a band of its own under
+     the map, which read as a second, mostly empty strip. */
+  const densH = Math.round(H * 0.3);
 
   for (let x = 0; x < W; x++) {
     const b = bins[x];
@@ -69,13 +71,13 @@ export function drawStrip(canvas, prof, opts = {}) {
        deteriorating drive look like it was getting better. */
     if (b.skip) {
       ctx.fillStyle = pal.skip;
-      ctx.fillRect(x, 0, 1, heatH);
+      ctx.fillRect(x, 0, 1, H);
       continue;
     }
     if (b.code < 0) { continue; }
     ctx.fillStyle = pal.heat[bucketOf(b.code, prof.baselineMs)] || pal.heat[0];
-    ctx.fillRect(x, 0, 1, heatH);
-    if (b.density > 0 && densH > 0) {
+    ctx.fillRect(x, 0, 1, H);
+    if (b.density > 0) {
       const h = Math.max(1, Math.round(Math.log1p(b.density * 9) / Math.log(10) * densH));
       ctx.fillStyle = pal.heat[1];
       ctx.fillRect(x, H - h, 1, h);
@@ -163,7 +165,7 @@ export function drawFreshness(canvas, ages, intervalS, opts = {}) {
   const pal = opts.palette || readPalette();
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || 600;
-  const H = canvas.clientHeight || 24;
+  const H = canvas.clientHeight || 46;
   canvas.width = Math.round(W * dpr);
   canvas.height = Math.round(H * dpr);
   const ctx = canvas.getContext('2d');

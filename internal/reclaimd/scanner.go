@@ -117,6 +117,11 @@ type LiveProgress struct {
 	SlowMs     float64 `json:"slow_threshold_ms"`
 	DangerMs   float64 `json:"danger_threshold_ms"`
 	Phase      string  `json:"phase"`
+	// ReprobeAtTs is when the re-probe reads begin, Unix seconds, on the
+	// frames of a round that is waiting for them. The sweep's ETA runs out
+	// as the sweep ends, and a page that kept showing it had the round
+	// stuck at "3 sec remaining" for the ten minutes the wait takes.
+	ReprobeAtTs int64 `json:"reprobe_at_ts,omitempty"`
 }
 
 // Round phases, reported as codes.
@@ -201,6 +206,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 	duty := NewDutyController(cfg)
 	var retries []retryEntry
 	var blocksRead, slow, danger, media, dropouts, rewritten int
+	var reprobeAt time.Time
 	totalMiB := (blockCount * blockSize) >> 20
 
 	emit := func(phase string, pos int64) {
@@ -221,7 +227,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 			eta = remaining/speed*(1+duty.RestRatio()) + 0
 		}
 		rolling := base.Rolling.Median()
-		in.OnProgress(LiveProgress{
+		p := LiveProgress{
 			Disk: in.Key, RoundSeq: seq,
 			PosMiB: pos >> 20, TotalMiB: totalMiB, DoneMiB: doneMiB,
 			SpeedMiBs: round2(speed),
@@ -232,7 +238,11 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 			DeferN: deferred.Count(), ReprobeN: len(retries), RewrittenN: rewritten,
 			SlowMs: msOf(base.Slow), DangerMs: msOf(base.Danger),
 			Phase: phase,
-		})
+		}
+		if !reprobeAt.IsZero() {
+			p.ReprobeAtTs = reprobeAt.Unix()
+		}
+		in.OnProgress(p)
 	}
 	emit(PhaseSweep, in.Schedule.Cursor)
 	outcome := OutcomeClean
@@ -368,10 +378,15 @@ sweep:
 	}
 
 	healed, stillSlow, overwritten := 0, 0, 0
+	reprobing := outcome != OutcomeDropout && outcome != OutcomeCancelled && len(retries) > 0
+	if reprobing {
+		reprobeAt = time.Now().Add(s.reprobeWait(retries))
+	}
 	emit(PhaseReprobe, cursor)
 	if outcome != OutcomeDropout && outcome != OutcomeCancelled {
 		healed, stillSlow, overwritten = s.reprobe(ctx, in, retries, base, lat, blockSize)
 	}
+	reprobeAt = time.Time{}
 	res.Summary.Healed = healed
 	res.Summary.StillSlow = stillSlow
 	res.Summary.Overwritten = overwritten
@@ -586,17 +601,39 @@ func (s *Scanner) recordRewrite(key string, seq uint64, r RewriteResult) {
 // report a healed block that was never touched. Waiting clears the cache and
 // also gives the background reclaim time to finish, which is the thing being
 // tested.
+// reprobeEntries is the part of the round's retries the re-probe covers: the
+// first ReprobeMax in sweep order. Probing all of them would be a second
+// sweep's worth.
+func (s *Scanner) reprobeEntries(entries []retryEntry) []retryEntry {
+	if len(entries) > s.cfg.ReprobeMax {
+		return entries[:s.cfg.ReprobeMax]
+	}
+	return entries
+}
+
+// reprobeWait is how long the re-probe has to wait before its first read,
+// for the last of its entries to clear the delay. Capped at the delay itself,
+// against a clock jump.
+func (s *Scanner) reprobeWait(entries []retryEntry) time.Duration {
+	wait := time.Duration(0)
+	for _, e := range s.reprobeEntries(entries) {
+		if d := time.Until(e.DeferUntil); d > wait {
+			wait = d
+		}
+	}
+	if wait > s.cfg.ReprobeDelay.Duration() {
+		wait = s.cfg.ReprobeDelay.Duration()
+	}
+	return wait
+}
+
 func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEntry,
 	base Baseline, lat *LatencyMap, blockSize int64) (healed, stillSlow, overwritten int) {
 
 	if len(entries) == 0 {
 		return 0, 0, 0
 	}
-	if len(entries) > s.cfg.ReprobeMax {
-		// Probe the first ReprobeMax in sweep order. Probing all of them would
-		// be a second sweep's worth.
-		entries = entries[:s.cfg.ReprobeMax]
-	}
+	entries = s.reprobeEntries(entries)
 
 	// Wait the delay out, for every entry.
 	//
@@ -612,15 +649,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 	// Waiting costs nothing that matters: it is an idle sleep on an open
 	// read-only descriptor, and the round is already over in every sense but
 	// the bookkeeping.
-	wait := time.Duration(0)
-	for _, e := range entries {
-		if d := time.Until(e.DeferUntil); d > wait {
-			wait = d
-		}
-	}
-	if wait > s.cfg.ReprobeDelay.Duration() {
-		wait = s.cfg.ReprobeDelay.Duration() // defensive, against a clock jump
-	}
+	wait := s.reprobeWait(entries)
 	if wait > 0 {
 		if err := sleepCtx(ctx, wait); err != nil {
 			return 0, 0, 0

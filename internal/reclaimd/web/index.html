@@ -60,7 +60,7 @@
     <h1 id="verdict-line" aria-live="polite"></h1>
     <p id="verdict-why" class="lede"></p>
     <div class="tiles">
-      <div class="tile"><div class="v mono" id="kpi-next">—</div><div class="k" data-i18n="kpi.next"></div></div>
+      <div class="tile"><div class="v mono" id="kpi-next">—</div><div class="k" id="kpi-next-k" data-i18n="kpi.next"></div></div>
       <div class="tile"><div class="v mono" id="kpi-last">—</div><div class="k" data-i18n="kpi.last"></div></div>
       <div class="tile"><div class="v mono" id="kpi-interval">—</div><div class="k" data-i18n="kpi.interval"></div></div>
       <div class="tile"><div class="v mono" id="kpi-healed">—</div><div class="k" data-i18n="kpi.healed"></div></div>
@@ -74,7 +74,7 @@
       <div><dt data-i18n="live.pos"></dt><dd id="lv-pos">—</dd></div>
       <div><dt data-i18n="live.speed"></dt><dd id="lv-speed">—</dd></div>
       <div><dt data-i18n="live.drift"></dt><dd id="lv-drift">—</dd></div>
-      <div><dt data-i18n="live.eta"></dt><dd id="lv-eta">—</dd></div>
+      <div><dt id="lv-eta-k" data-i18n="live.eta"></dt><dd id="lv-eta">—</dd></div>
       <div><dt data-i18n="live.found"></dt><dd id="lv-found">—</dd></div>
     </dl>
     <figure class="gauge">
@@ -106,7 +106,7 @@
   <section id="fresh" class="card" hidden>
     <h2 data-i18n="fresh.title"></h2>
     <p class="headline" id="fresh-oldest"></p>
-    <canvas id="fresh-canvas" class="thin"></canvas>
+    <canvas id="fresh-canvas" class="strip"></canvas>
     <div class="axis mono" id="fresh-axis"></div>
     <div class="legend" id="fresh-legend"></div>
     <p class="cap" data-i18n="fresh.caveat"></p>
