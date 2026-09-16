@@ -32,7 +32,10 @@ type diskState struct {
 
 	Scanning bool
 	Live     *LiveProgress
-	LastErr  string
+	// live is the supervisor's copy of the map the running round is filling
+	// in, for the status page. Nil between rounds.
+	live    *liveMap
+	LastErr string
 
 	// Testing is a speed test in flight. It holds the disk the way Scanning
 	// does, since two readers on one stick would only measure each other.
@@ -77,6 +80,11 @@ type Supervisor struct {
 	// OnChange is called when a disk's lifecycle state changes, so the UI can
 	// refetch. That saves inventing a full state push for it.
 	OnChange func(key, change string)
+	// OnBlock is called with every block value a running round records, in
+	// the order it records them. The HTTP layer batches these onto the
+	// progress frames, so the page can fill its copy of the map in without
+	// fetching the whole thing again.
+	OnBlock func(key string, idx int64, code uint16)
 
 	heartbeat atomic64
 
@@ -346,6 +354,7 @@ func (s *Supervisor) runRound(ctx, roundCtx context.Context, st *diskState, in R
 		stop := st.stop
 		st.stop = nil
 		st.Live = nil
+		st.live = nil
 		s.mu.Unlock()
 		if stop != nil {
 			stop()
@@ -380,6 +389,22 @@ func (s *Supervisor) runRound(ctx, roundCtx context.Context, st *diskState, in R
 	}
 	in.Dev = dev
 	in.Ext = NewExternalIOMonitor(s.cfg, s.platform, in.Presence)
+
+	// The round's map is its own, written from its goroutine, so the page is
+	// served from a copy that is kept in step one write at a time. The
+	// geometry is the round's: it takes the block size from the device it was
+	// opened with and the count from the device's size, as this does.
+	live := newLiveMap(NewLatencyMap(dev.BlockSize(), dev.Size()/int64(dev.BlockSize()),
+		in.Schedule.RoundSeq+1, time.Now()))
+	s.mu.Lock()
+	st.live = live
+	s.mu.Unlock()
+	in.OnBlock = func(idx int64, code uint16) {
+		live.set(idx, code)
+		if s.OnBlock != nil {
+			s.OnBlock(st.Key, idx, code)
+		}
+	}
 	in.OnProgress = func(p LiveProgress) {
 		s.mu.Lock()
 		cp := p
@@ -631,6 +656,59 @@ func (s *Supervisor) setErr(st *diskState, err error) {
 	s.mu.Lock()
 	st.LastErr = err.Error()
 	s.mu.Unlock()
+}
+
+// liveMap is the copy of a running round's latency map that the page reads
+// from. The round writes it from its own goroutine and HTTP handlers read it
+// from theirs, so it carries its own lock rather than the supervisor's, which
+// a round should not have to take once per block.
+type liveMap struct {
+	mu sync.Mutex
+	m  *LatencyMap
+}
+
+func newLiveMap(m *LatencyMap) *liveMap {
+	return &liveMap{m: m}
+}
+
+func (l *liveMap) set(idx int64, code uint16) {
+	l.mu.Lock()
+	if idx >= 0 && idx < int64(len(l.m.Values)) {
+		l.m.Values[idx] = code
+	}
+	l.mu.Unlock()
+}
+
+// snapshot is a copy that nobody writes to any more, with the baseline the
+// round has learned so far filled in from the last progress frame.
+func (l *liveMap) snapshot(baseline time.Duration) *LatencyMap {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	m := *l.m
+	m.Values = append([]uint16(nil), l.m.Values...)
+	m.Baseline = baseline
+	m.OnWrite = nil
+	return &m
+}
+
+// LiveProfile is the map of the round running on a disk, as far as it has
+// got. ErrNotFound between rounds.
+func (s *Supervisor) LiveProfile(key string) (*LatencyMap, error) {
+	s.mu.RLock()
+	st, ok := s.disks[key]
+	var live *liveMap
+	var baseline time.Duration
+	if ok {
+		live = st.live
+		if st.Live != nil {
+			baseline = time.Duration(st.Live.BaseP50Ms * float64(time.Millisecond))
+		}
+	}
+	s.mu.RUnlock()
+	if live == nil {
+		return nil, ErrNotFound
+	}
+	return live.snapshot(baseline), nil
 }
 
 func (s *Supervisor) notifyChange(key, change string) {

@@ -553,7 +553,7 @@ func (rw *Rewriter) verify(ctx context.Context, req rewriteRequest, done []int64
 			req.Ext.RecordSelfRead(int(blockSize))
 		}
 		if idx := off / blockSize; idx < int64(len(req.Lat.Values)) {
-			req.Lat.Values[idx] = EncodeLatency(d)
+			req.Lat.Set(idx, EncodeLatency(d))
 		}
 		if d >= req.Slow {
 			res.StillSlow++

@@ -36,12 +36,15 @@ export async function getEvents(key, limit = 120) {
   return (await (await get(`/disks/${encodeURIComponent(key)}/events?limit=${limit}`)).json()).events || [];
 }
 
+/* 'latest' is the last completed pass and 'live' the one running now, as far
+   as it has got. Both change, so neither is cached. */
 export async function getProfile(key, round = 'latest', res = 'full') {
   const id = `${key}|${round}|${res}`;
-  if (round !== 'latest' && profileCache.has(id)) return profileCache.get(id);
+  const immutable = round !== 'latest' && round !== 'live';
+  if (immutable && profileCache.has(id)) return profileCache.get(id);
   const r = await get(`/disks/${encodeURIComponent(key)}/profile?round=${round}&res=${res}`);
   const buf = await r.arrayBuffer();
-  if (round !== 'latest') profileCache.set(id, buf);
+  if (immutable) profileCache.set(id, buf);
   return buf;
 }
 

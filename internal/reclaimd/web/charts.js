@@ -192,6 +192,11 @@ export function drawFreshness(canvas, ages, intervalS, opts = {}) {
     ctx.fillStyle = pal.fresh[b];
     ctx.fillRect(x, 0, 1, H);
   }
+  if (opts.cursorMiB != null && opts.totalMiB > 0) {
+    const cx = Math.round((opts.cursorMiB / opts.totalMiB) * W);
+    ctx.fillStyle = pal.accent;
+    ctx.fillRect(cx, 0, 2, H);
+  }
   return counts;
 }
 

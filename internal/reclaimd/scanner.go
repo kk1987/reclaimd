@@ -83,6 +83,9 @@ type RoundInput struct {
 	// notable event. It must not block: the caller coalesces and rate-limits
 	// before anything reaches a browser.
 	OnProgress func(LiveProgress)
+	// OnBlock, when set, hears every block value the round records, sweep,
+	// re-probe and rewrite alike. Like OnProgress it must not block.
+	OnBlock func(idx int64, code uint16)
 }
 
 // LiveProgress is a snapshot of a running round.
@@ -168,6 +171,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 	seq := in.Schedule.RoundSeq + 1
 	started := time.Now()
 	lat := NewLatencyMap(cfg.BlockSize, blockCount, seq, started)
+	lat.OnWrite = in.OnBlock
 	deferred := newSegmentBitmap(segCount)
 
 	res := RoundResult{
@@ -187,6 +191,9 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 		return s.finish(res, started, s.outcomeFor(err), err)
 	}
 	res.Baseline = base
+	// Set now rather than at the end, so a snapshot of the map taken while
+	// the round runs carries the baseline its colours are keyed to.
+	lat.Baseline = base.RoundP50
 	res.Summary.BaselineMicros = base.RoundP50.Microseconds()
 	res.Summary.SlowMicros = base.Slow.Microseconds()
 	res.Summary.DangerMicros = base.Danger.Microseconds()
@@ -269,7 +276,7 @@ sweep:
 				// fall through to threshold checks
 
 			case errors.Is(err, ErrDeviceDisconnected):
-				lat.Values[idx] = LatError
+				lat.Set(idx, LatError)
 				dropouts++
 				outcome = OutcomeDropout
 				s.onDropout(ctx, in, seg, off, d, seq, perSeg, blockSize)
@@ -278,12 +285,12 @@ sweep:
 			case errors.Is(err, ErrAlignment):
 				// Our own bug. Fail loudly, or it spends months disguised as
 				// a mysteriously flaky stick.
-				lat.Values[idx] = LatError
+				lat.Set(idx, LatError)
 				outcome, fatal = OutcomeCancelled, err
 				break sweep
 
 			case errors.Is(err, ErrMediaError):
-				lat.Values[idx] = LatError
+				lat.Set(idx, LatError)
 				media++
 				retries = append(retries, s.deferBlock(in.Key, seq, off, d,
 					EventMedia, cfg.ReprobeDelay.Duration(), 0))
@@ -291,12 +298,12 @@ sweep:
 				continue sweep
 
 			default:
-				lat.Values[idx] = LatError
+				lat.Set(idx, LatError)
 				outcome, fatal = OutcomeCancelled, err
 				break sweep
 			}
 
-			lat.Values[idx] = EncodeLatency(d)
+			lat.Set(idx, EncodeLatency(d))
 			blocksRead++
 			cursor = off + blockSize
 			if in.Ext != nil {
@@ -413,7 +420,6 @@ sweep:
 		res.Cursor = resumeInterrupted(order, segIdx, in.Deferred, deferred,
 			in.Schedule.Cursor, int64(perSeg)*blockSize)
 	}
-	lat.Baseline = base.RoundP50
 	emit(PhaseDone, cursor)
 
 	return s.finish(res, started, outcome, fatal)
@@ -647,7 +653,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 				nowHash = lastHash(in.Dev)
 			}
 			if idx := off / blockSize; idx < int64(len(lat.Values)) {
-				lat.Values[idx] = EncodeLatency(d)
+				lat.Set(idx, EncodeLatency(d))
 			}
 			if d > worst {
 				worst = d

@@ -62,6 +62,22 @@ type LatencyMap struct {
 	StartedAt  time.Time
 	Baseline   time.Duration
 	Values     []uint16
+
+	// OnWrite, when set, hears every value that goes in through Set. A
+	// running round sets it so the supervisor can keep a copy of the map as
+	// it fills in, for the status page to show. A map read back from the
+	// store has none.
+	OnWrite func(idx int64, code uint16)
+}
+
+// Set records one block's value and tells OnWrite, if anyone is listening.
+// Every write a round makes goes through here, so the copy the supervisor
+// keeps never falls behind the map the round is filling in.
+func (m *LatencyMap) Set(idx int64, code uint16) {
+	m.Values[idx] = code
+	if m.OnWrite != nil {
+		m.OnWrite(idx, code)
+	}
 }
 
 func NewLatencyMap(blockSize int, blockCount int64, seq uint64, started time.Time) *LatencyMap {

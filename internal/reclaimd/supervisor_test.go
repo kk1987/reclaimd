@@ -439,3 +439,36 @@ func TestARoundThatReadNothingOnlyMovesTheSchedule(t *testing.T) {
 		t.Errorf("stored schedule %+v (%v) does not match", saved, err)
 	}
 }
+
+// The page's copy of a running round's map is a snapshot: what the round has
+// written so far, keyed to the baseline it has reported, and not a view onto
+// memory the round is still writing to. Between rounds there is none.
+func TestLiveProfileIsASnapshotOfTheRunningRound(t *testing.T) {
+	live := newLiveMap(NewLatencyMap(1<<20, 64, 4, time.Now()))
+	sup := &Supervisor{disks: map[string]*diskState{
+		"a": {Key: "a", live: live, Live: &LiveProgress{RoundSeq: 4, BaseP50Ms: 12}},
+		"b": {Key: "b"},
+	}}
+
+	live.set(3, 300)
+	m, err := sup.LiveProfile("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.RoundSeq != 4 || m.Values[3] != 300 || m.Values[4] != LatSkipped {
+		t.Fatalf("snapshot = seq %d, values[3..4] = %#x %#x", m.RoundSeq, m.Values[3], m.Values[4])
+	}
+	if m.Baseline != 12*time.Millisecond {
+		t.Fatalf("snapshot baseline = %v, want the reported 12ms", m.Baseline)
+	}
+	live.set(4, 310)
+	if m.Values[4] != LatSkipped {
+		t.Fatal("a write after the snapshot changed it")
+	}
+	if _, err := sup.LiveProfile("b"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LiveProfile on an idle disk = %v, want ErrNotFound", err)
+	}
+	if _, err := sup.LiveProfile("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LiveProfile on an unknown disk = %v, want ErrNotFound", err)
+	}
+}

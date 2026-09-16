@@ -515,3 +515,33 @@ func TestCleanRoundReportsCompleted(t *testing.T) {
 		t.Error("a clean full sweep did not report itself completed")
 	}
 }
+
+// Every value a round writes reaches OnBlock, so the copy the supervisor
+// keeps for the page ends up identical to the map the round hands back. A
+// write that bypassed the hook would leave a block on the page at "not
+// measured" for the rest of the round.
+func TestRoundReportsEveryBlockItRecords(t *testing.T) {
+	cfg := fastConfig(t)
+	const blocks = 2048
+	disk := newFakeDisk(blocks, cfg.BlockSize, 10*time.Millisecond)
+	if disk.seedSuperblockTails(cfg.BlocksPerSegment(), 3, 120*time.Millisecond) == 0 {
+		t.Fatal("test seeded no degraded blocks")
+	}
+	sc, _ := newTestScanner(t, cfg)
+
+	copyMap := NewLatencyMap(cfg.BlockSize, blocks, 1, time.Now())
+	in := RoundInput{Key: "fake", Dev: disk, Schedule: NewSchedule(cfg, time.Now()),
+		OnBlock: func(idx int64, code uint16) { copyMap.Values[idx] = code }}
+	res, err := sc.Round(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.BlocksRead == 0 {
+		t.Fatal("the round read nothing")
+	}
+	for i, v := range res.Latency.Values {
+		if copyMap.Values[i] != v {
+			t.Fatalf("block %d: the copy has %#x, the round's map %#x", i, copyMap.Values[i], v)
+		}
+	}
+}

@@ -77,6 +77,7 @@ export const DICT = {
     'map.legend.bad': '很慢', 'map.legend.danger': '危险',
     'map.legend.drop': '掉线', 'map.legend.skip': '未测量',
     'map.stat': '第 {seq} 轮 · 慢 {slow} · 掉线 {drop} · 基线 {base}',
+    'map.statLive': '第 {seq} 轮扫描中 · 慢 {slow} · 掉线 {drop} · 基线 {base}',
     'map.none': '还没有扫描数据',
 
     'stack.abs': '绝对', 'stack.prev': '对比上一轮', 'stack.first': '对比首轮',
@@ -246,6 +247,7 @@ export const DICT = {
     'map.legend.bad': 'very slow', 'map.legend.danger': 'danger',
     'map.legend.drop': 'dropout', 'map.legend.skip': 'not measured',
     'map.stat': 'pass #{seq} · {slow} slow · {drop} dropouts · baseline {base}',
+    'map.statLive': 'pass #{seq}, running · {slow} slow · {drop} dropouts · baseline {base}',
     'map.none': 'No scan data yet',
 
     'stack.abs': 'Absolute', 'stack.prev': 'vs previous', 'stack.first': 'vs first',

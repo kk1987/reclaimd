@@ -1,7 +1,7 @@
 import * as api from './api.js';
 import * as I from './i18n.js';
 import * as C from './charts.js';
-import { decodeProfile } from './codec.js';
+import { decodeProfile, LAT_ERROR } from './codec.js';
 import { connect } from './stream.js';
 
 const $ = (id) => document.getElementById(id);
@@ -13,6 +13,14 @@ const state = {
   rounds: [],
   events: [],
   profile: null,
+  /* The map of the round running now, filled in from the blocks that ride
+     along on the progress frames. Null between rounds, when the map shown is
+     the last completed pass. */
+  liveProfile: null,
+  liveLoading: false, // the live snapshot is on the wire
+  liveReload: false, // a frame went missing while it was, so fetch it again
+  liveQueue: [], // blocks that arrived while it was
+  liveFrameN: null, // the last frame's number, to notice one missing
   stack: [],
   freshness: null,
   stackMode: 'abs',
@@ -86,16 +94,20 @@ async function boot() {
       loadSystem();
     },
     onProgress: onProgress,
-    onState: async () => {
+    onState: async (d) => {
       /* Scanning on or off is exactly what these events report, and the disk
          card draws that from the list. Refreshing only the detail leaves the
          card saying Scanning after the round ended, and its button disabled
          with it. */
       try { state.disks = await api.getDisks(); } catch (e) { /* below reports */ }
       /* A soft refresh keeps the profiles already in hand, which is only right
-         while the page is still looking at the same disk. */
+         while the page is still looking at the same disk, and only until a
+         round ends: that is when the completed pass replaces the live map,
+         and when the freshness the daemon stamped replaces the page's own. */
       const moved = reselect();
-      await refreshDetail(!moved);
+      const ended = d?.disk === state.selected && d?.change === 'SCAN_END';
+      if (ended) dropLive();
+      await refreshDetail(!moved && !ended);
     },
     onResync: () => refreshAll(),
     onStatus: setConn,
@@ -250,6 +262,7 @@ async function refreshDetail(soft) {
 async function loadProfiles() {
   state.profile = null;
   state.stack = [];
+  dropLive();
   try {
     state.profile = decodeProfile(await api.getProfile(state.selected, 'latest'));
   } catch (e) { /* no pass yet */ }
@@ -258,6 +271,11 @@ async function loadProfiles() {
     const buf = await api.getFreshness(state.selected);
     state.freshness = new Uint32Array(buf);
   } catch (e) { state.freshness = null; }
+
+  /* A page opened on a disk mid-round starts from the map as far as it has
+     got, and fills the rest in from the frames. After the freshness, which
+     this stands in for on a first round. */
+  if (state.detail?.live) await loadLive(state.detail.live.seq);
 
   /* Only completed passes are fetched for the waterfall, and those are
      immutable and cached, so this costs one request per pass ever. */
@@ -499,8 +517,14 @@ function renderControllers() {
   }
 }
 
+/* The map on show: the running round's while there is one, since that is the
+   one moving, and the last completed pass otherwise. */
+function shownProfile() {
+  return state.liveProfile || state.profile;
+}
+
 function renderMap() {
-  const p = state.profile;
+  const p = shownProfile();
   const label = $('map-label'), stat = $('map-stat');
   if (!p) {
     label.textContent = I.t('map.none');
@@ -510,22 +534,34 @@ function renderMap() {
     $('map-axis').innerHTML = '';
     return;
   }
-  const last = state.rounds[state.rounds.length - 1];
-  label.textContent = I.fmtAbs(p.startedTs);
-  stat.textContent = I.t('map.stat', {
-    seq: p.seq,
-    slow: I.fmtNum(last?.slow_blocks_n || 0),
-    drop: I.fmtNum(last?.dropouts_n || 0),
-    base: I.fmtLatency(p.baselineMs),
-  });
   const live = state.detail?.live;
-  C.drawStrip($('map-canvas'), p, {
-    cursorMiB: live ? live.pos_mib : null,
-    totalMiB: live ? live.total_mib : null,
-  });
+  label.textContent = I.fmtAbs(p.startedTs);
+  if (p === state.liveProfile && live) {
+    stat.textContent = I.t('map.statLive', {
+      seq: p.seq,
+      slow: I.fmtNum(live.slow_n || 0),
+      drop: I.fmtNum(live.drop_n || 0),
+      base: I.fmtLatency(p.baselineMs),
+    });
+  } else {
+    const last = state.rounds[state.rounds.length - 1];
+    stat.textContent = I.t('map.stat', {
+      seq: p.seq,
+      slow: I.fmtNum(last?.slow_blocks_n || 0),
+      drop: I.fmtNum(last?.dropouts_n || 0),
+      base: I.fmtLatency(p.baselineMs),
+    });
+  }
+  C.drawStrip($('map-canvas'), p, cursorOpts());
   $('map-legend').innerHTML = C.legendHTML(p.baselineMs);
 
   $('map-axis').innerHTML = diskAxisHTML(p);
+}
+
+/* Where the running round is, for the strips to mark. Nothing between rounds. */
+function cursorOpts() {
+  const live = state.detail?.live;
+  return { cursorMiB: live ? live.pos_mib : null, totalMiB: live ? live.total_mib : null };
 }
 
 /* Eight ticks across the whole disk, in whichever gigabyte the page counts in,
@@ -561,7 +597,7 @@ function renderFreshness() {
   if (!state.freshness || !state.freshness.length) { sec.hidden = true; return; }
   sec.hidden = false;
   const iv = state.detail?.interval_s || 0;
-  const counts = C.drawFreshness($('fresh-canvas'), state.freshness, iv);
+  const counts = C.drawFreshness($('fresh-canvas'), state.freshness, iv, cursorOpts());
 
   const oldest = state.detail?.oldest_data_s;
   const never = Array.prototype.reduce.call(state.freshness, (n, v) => n + (v === 0 ? 1 : 0), 0);
@@ -578,7 +614,7 @@ function renderFreshness() {
     `<span><i style="background:var(--fresh-${b})"></i>${I.t('fresh.legend.' + b)}
      <span class="mono">${counts[b]}</span></span>`).join('');
 
-  const p = state.profile;
+  const p = shownProfile();
   if (p) $('fresh-axis').innerHTML = diskAxisHTML(p);
 }
 
@@ -883,9 +919,78 @@ function onProgress(p) {
   if (!state.detail || p.disk !== state.selected) return;
   state.detail.live = p;
   renderLive(p);
-  if (state.profile) {
-    C.drawStrip($('map-canvas'), state.profile,
-      { cursorMiB: p.pos_mib, totalMiB: p.total_mib });
+  /* A frame the stream dropped, or missed while reconnecting, took its
+     blocks with it. The snapshot is fetched again rather than leaving those
+     blocks at "not measured" for the rest of the round. */
+  if (state.liveFrameN != null && p.frame_n !== state.liveFrameN + 1) {
+    dropLive();
+    if (state.liveLoading) state.liveReload = true;
+  }
+  state.liveFrameN = p.frame_n;
+  /* The first frame of a round is when the map on show becomes that round's.
+     Until the snapshot arrives the blocks wait, since a block recorded after
+     the snapshot was taken can land here before the snapshot itself does. */
+  if (!state.liveProfile || state.liveProfile.seq !== p.seq) {
+    if (p.blocks?.length) state.liveQueue.push(p.blocks);
+    loadLive(p.seq);
+  } else {
+    if (p.base_p50_ms > 0) state.liveProfile.baselineMs = p.base_p50_ms;
+    if (p.blocks?.length) applyBlocks(p.blocks);
+  }
+  renderMap();
+  renderFreshness();
+}
+
+/* Fetches the running round's map as far as it has got, once per round. */
+async function loadLive(seq) {
+  if (state.liveLoading) return;
+  state.liveLoading = true;
+  let prof = null;
+  try {
+    prof = decodeProfile(await api.getProfile(state.selected, 'live'));
+  } catch (e) { /* the round ended first, or never started */ }
+  state.liveLoading = false;
+  if (state.liveReload) {
+    state.liveReload = false;
+    return loadLive(seq);
+  }
+  if (!prof || prof.seq !== seq || !state.detail?.live || state.detail.live.seq !== seq) {
+    state.liveQueue = [];
+    return;
+  }
+  state.liveProfile = prof;
+  /* A disk on its first round has no freshness yet. The daemon writes it
+     when the round ends, and until then the page keeps its own, one segment
+     of 32 MiB per entry as the daemon lays it out. */
+  if (!state.freshness) {
+    state.freshness = new Uint32Array(Math.ceil(prof.values.length / ((32 << 20) / prof.blockSize)));
+  }
+  const queued = state.liveQueue;
+  state.liveQueue = [];
+  for (const b of queued) applyBlocks(b);
+  renderMap();
+  renderFreshness();
+}
+
+function dropLive() {
+  state.liveProfile = null;
+  state.liveQueue = [];
+  state.liveFrameN = null;
+}
+
+/* Blocks come as flat (index, code) pairs. A real reading also freshens the
+   segment it sits in, the way the daemon stamps it when the round ends: what
+   the daemon will write down is derived here from the same reads. */
+function applyBlocks(blocks) {
+  const prof = state.liveProfile;
+  const ages = state.freshness;
+  const perSeg = ages?.length ? Math.ceil(prof.values.length / ages.length) : 0;
+  const now = Math.floor(Date.now() / 1000);
+  for (let i = 0; i + 1 < blocks.length; i += 2) {
+    const idx = blocks[i], code = blocks[i + 1];
+    if (idx >= prof.values.length) continue;
+    prof.values[idx] = code;
+    if (perSeg && code < LAT_ERROR) ages[Math.floor(idx / perSeg)] = now;
   }
 }
 
@@ -897,17 +1002,16 @@ function scheduleRedraw() {
   redrawPending = true;
   requestAnimationFrame(() => {
     redrawPending = false;
-    if (state.profile) {
-      const live = state.detail?.live;
-      C.drawStrip($('map-canvas'), state.profile,
-        { cursorMiB: live?.pos_mib, totalMiB: live?.total_mib });
-      $('map-legend').innerHTML = C.legendHTML(state.profile.baselineMs);
+    const shown = shownProfile();
+    if (shown) {
+      C.drawStrip($('map-canvas'), shown, cursorOpts());
+      $('map-legend').innerHTML = C.legendHTML(shown.baselineMs);
     }
     if (state.stack.length >= 2) {
       C.drawStack($('stack-canvas'), state.stack, { rowH: 16, mode: state.stackMode });
     }
     if (state.freshness) {
-      C.drawFreshness($('fresh-canvas'), state.freshness, state.detail?.interval_s || 0);
+      C.drawFreshness($('fresh-canvas'), state.freshness, state.detail?.interval_s || 0, cursorOpts());
     }
     if (state.profile) C.svgModHistogram($('mod-hist'), state.profile, BLOCKS_PER_SEGMENT);
     if (state.rounds.length >= 2) C.svgTrends($('trend-svg'), state.rounds);

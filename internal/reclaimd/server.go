@@ -37,19 +37,48 @@ type Server struct {
 	Build BuildInfo
 
 	mu sync.Mutex
-	// pending holds the frames that arrived since the last tick, and only
-	// those. An entry left behind here goes out again on every later tick that
-	// any other disk makes busy, which is how a round that ended half an hour
-	// ago keeps arriving at the browser.
-	pending map[string]LiveProgress
+	// pending holds, per running disk, the newest frame and the block values
+	// recorded since the last tick. Only a disk marked dirty goes out on a
+	// tick, and going out clears the mark: a frame is sent once, on the tick
+	// after it arrived, and after that only carried along under new blocks.
+	// Sending every entry on every tick that any disk made busy was how a
+	// round that ended half an hour ago kept arriving at the browser.
+	pending map[string]*pendingFrame
+}
+
+// pendingFrame is one disk's share of the publisher's queue.
+type pendingFrame struct {
+	frame LiveProgress
+	// has says a frame has arrived. Blocks recorded before the round's first
+	// frame wait for it, since they go out on one.
+	has    bool
+	dirty  bool
+	blocks []uint32
+	n      uint64 // frames sent for this round so far
+}
+
+// liveFrame is a progress event as the page receives it: the round's newest
+// snapshot, and the block values it recorded since the previous event as flat
+// (index, code) pairs. The pairs let the page fill its copy of the map in as
+// the round goes, instead of fetching the whole map again and again.
+//
+// FrameN counts the round's frames from 1. The hub drops a progress frame a
+// slow client has no room for, and a reconnecting client gets no replay of
+// them, so a page that sees the count skip knows its map has holes and
+// fetches the snapshot again.
+type liveFrame struct {
+	LiveProgress
+	FrameN uint64   `json:"frame_n"`
+	Blocks []uint32 `json:"blocks,omitempty"`
 }
 
 func NewServer(cfg Config, store *Store, sup *Supervisor, logger *slog.Logger) *Server {
 	s := &Server{
 		cfg: cfg, store: store, sup: sup, logger: logger,
-		hub: NewHub(), start: time.Now(), pending: map[string]LiveProgress{},
+		hub: NewHub(), start: time.Now(), pending: map[string]*pendingFrame{},
 	}
 	sup.OnLive = s.onLive
+	sup.OnBlock = s.onBlock
 	sup.OnChange = func(key, change string) {
 		if change == "SCAN_END" {
 			// A frame queued in the last half-second would otherwise land
@@ -67,22 +96,44 @@ func NewServer(cfg Config, store *Store, sup *Supervisor, logger *slog.Logger) *
 
 func (s *Server) onLive(p LiveProgress) {
 	s.mu.Lock()
-	s.pending[p.Disk] = p
+	e := s.entry(p.Disk)
+	e.frame, e.has, e.dirty = p, true, true
 	s.mu.Unlock()
 }
 
-// drainPending takes the frames that arrived since the last call, leaving the
-// map empty. Emptying it is the point. See the field's comment for why.
-func (s *Server) drainPending() []LiveProgress {
+func (s *Server) onBlock(key string, idx int64, code uint16) {
+	s.mu.Lock()
+	e := s.entry(key)
+	e.blocks = append(e.blocks, uint32(idx), uint32(code))
+	e.dirty = true
+	s.mu.Unlock()
+}
+
+// entry is the disk's queue slot, made on first use. Called with mu held.
+func (s *Server) entry(key string) *pendingFrame {
+	e := s.pending[key]
+	if e == nil {
+		e = &pendingFrame{}
+		s.pending[key] = e
+	}
+	return e
+}
+
+// drainPending takes what arrived since the last call: one frame per disk that
+// has something new, with the blocks recorded since the previous one. The
+// blocks go with it and the dirty mark comes off, so nothing goes out twice.
+// See the field's comment for why that matters.
+func (s *Server) drainPending() []liveFrame {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.pending) == 0 {
-		return nil
-	}
-	out := make([]LiveProgress, 0, len(s.pending))
-	for key, p := range s.pending {
-		out = append(out, p)
-		delete(s.pending, key)
+	var out []liveFrame
+	for _, e := range s.pending {
+		if !e.dirty || !e.has {
+			continue
+		}
+		e.n++
+		out = append(out, liveFrame{LiveProgress: e.frame, FrameN: e.n, Blocks: e.blocks})
+		e.blocks, e.dirty = nil, false
 	}
 	return out
 }
@@ -371,8 +422,13 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	coarse := r.URL.Query().Get("res") == "coarse"
+	round := r.URL.Query().Get("round")
+	if round == "live" {
+		s.handleLiveProfile(w, key)
+		return
+	}
 	var seq uint64
-	if v := r.URL.Query().Get("round"); v != "" && v != "latest" {
+	if v := round; v != "" && v != "latest" {
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "bad round")
@@ -400,6 +456,31 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
+}
+
+// handleLiveProfile serves the map of the round running now, as far as it has
+// got, in the same format as a completed one. The page asks for it once, when
+// it finds a round running, and keeps it up to date from the blocks that ride
+// along on the progress frames. 404 between rounds.
+func (s *Server) handleLiveProfile(w http.ResponseWriter, key string) {
+	m, err := s.sup.LiveProfile(key)
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, http.StatusNotFound, CodeDeviceNotFound, "no round running")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	b, err := m.MarshalBinary()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(b)
 }

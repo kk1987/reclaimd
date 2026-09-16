@@ -1,6 +1,7 @@
 package reclaimd
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ import (
 // scan is running, so it climbed back into the live panel and froze there,
 // showing a position and an elapsed time that never moved again.
 func TestPublisherSendsEachFrameOnce(t *testing.T) {
-	s := &Server{pending: map[string]LiveProgress{}}
+	s := &Server{pending: map[string]*pendingFrame{}}
 
 	s.onLive(LiveProgress{Disk: "a", PosMiB: 96})
 	if got := s.drainPending(); len(got) != 1 || got[0].PosMiB != 96 {
@@ -34,6 +35,39 @@ func TestPublisherSendsEachFrameOnce(t *testing.T) {
 	got := s.drainPending()
 	if len(got) != 1 || got[0].Disk != "b" {
 		t.Fatalf("drain = %+v, want only the disk that moved", got)
+	}
+}
+
+// The blocks a round records ride along on the next frame out, and only once.
+// Between two frames of the scanner's own the blocks still go out, under the
+// frame already sent, so the map on the page fills in at the publisher's rate
+// and not at the scanner's, which reports every 64 blocks. Blocks recorded
+// before the round's first frame wait for it.
+func TestPublisherCarriesTheBlocksOnTheFrame(t *testing.T) {
+	s := &Server{pending: map[string]*pendingFrame{}}
+
+	s.onBlock("a", 7, 300)
+	if got := s.drainPending(); got != nil {
+		t.Fatalf("drain before any frame = %+v, want nothing", got)
+	}
+	s.onLive(LiveProgress{Disk: "a", PosMiB: 8})
+	s.onBlock("a", 8, 310)
+	got := s.drainPending()
+	if len(got) != 1 || got[0].PosMiB != 8 || got[0].FrameN != 1 {
+		t.Fatalf("drain = %+v, want the frame, numbered 1", got)
+	}
+	if want := []uint32{7, 300, 8, 310}; !slices.Equal(got[0].Blocks, want) {
+		t.Fatalf("blocks = %v, want %v", got[0].Blocks, want)
+	}
+
+	s.onBlock("a", 9, 320)
+	got = s.drainPending()
+	if len(got) != 1 || got[0].PosMiB != 8 || got[0].FrameN != 2 ||
+		!slices.Equal(got[0].Blocks, []uint32{9, 320}) {
+		t.Fatalf("drain = %+v, want the last frame under the new block only, numbered 2", got)
+	}
+	if got := s.drainPending(); got != nil {
+		t.Fatalf("drain with nothing new = %+v, want nothing", got)
 	}
 }
 
