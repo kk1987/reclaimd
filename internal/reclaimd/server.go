@@ -327,6 +327,7 @@ func (s *Server) views(detail bool) []DiskView {
 		v.Stopping = st.StopRequested
 		v.SpeedTesting = st.Testing
 		v.BytesWritten = st.Meta.BytesWritten
+		v.SegmentBytes = s.cfg.SegmentSize
 		if st.Live != nil {
 			live := *st.Live
 			v.Live = &live

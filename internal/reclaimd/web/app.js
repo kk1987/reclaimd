@@ -35,9 +35,15 @@ const state = {
   system: null, // GET /system: the build and the machine
 };
 
-/* Blocks per superblock. The daemon's own segment size is 32 MiB at 1 MiB
-   blocks. The mod histogram and the stubborn-region scan both key off it. */
-const BLOCKS_PER_SEGMENT = 32;
+/* Blocks per segment, for a profile. The daemon's segment is 32 MiB unless
+   configured otherwise, and the block size is resolved per disk: 1 MiB on
+   most sticks, 64 KiB on one whose controller takes no more per request. The
+   mod histogram, the stubborn-region scan and a first round's freshness all
+   key off it. */
+function blocksPerSegment(prof) {
+  const seg = state.detail?.segment_bytes || 32 << 20;
+  return Math.max(1, Math.round(seg / prof.blockSize));
+}
 
 /* Holds the disk's button down while the request is unanswered, then hands it
    to the list fetched right after. The list keeps it down if the round is
@@ -802,17 +808,17 @@ function renderStructure() {
   if (!state.profile) { sec.hidden = true; return; }
   sec.hidden = false;
 
-  const segMiB = (BLOCKS_PER_SEGMENT * state.profile.blockSize) / (1 << 20);
-  const r = C.svgModHistogram($('mod-hist'), state.profile, BLOCKS_PER_SEGMENT);
-  if (r && r.totalSlow > 0 && r.peak === BLOCKS_PER_SEGMENT - 1) {
+  const perSeg = blocksPerSegment(state.profile);
+  const segMiB = (perSeg * state.profile.blockSize) / (1 << 20);
+  const r = C.svgModHistogram($('mod-hist'), state.profile, perSeg);
+  if (r && r.totalSlow > 0 && r.peak === perSeg - 1) {
     $('mod-caption').textContent = I.t('structure.caption', {
       seg: segMiB + ' MiB', peak: r.peak, peakMs: I.fmtLatency(r.peakMs) });
   } else {
     $('mod-caption').textContent = I.t('structure.captionFlat', { seg: segMiB + ' MiB' });
   }
 
-  const stub = C.findStubborn(state.stack.length ? state.stack : [state.profile],
-    BLOCKS_PER_SEGMENT);
+  const stub = C.findStubborn(state.stack.length ? state.stack : [state.profile], perSeg);
   const list = $('stubborn');
   list.innerHTML = '';
   if (!stub.length) {
@@ -960,10 +966,10 @@ async function loadLive(seq) {
   }
   state.liveProfile = prof;
   /* A disk on its first round has no freshness yet. The daemon writes it
-     when the round ends, and until then the page keeps its own, one segment
-     of 32 MiB per entry as the daemon lays it out. */
+     when the round ends, and until then the page keeps its own, one entry
+     per segment as the daemon lays it out. */
   if (!state.freshness) {
-    state.freshness = new Uint32Array(Math.ceil(prof.values.length / ((32 << 20) / prof.blockSize)));
+    state.freshness = new Uint32Array(Math.ceil(prof.values.length / blocksPerSegment(prof)));
   }
   const queued = state.liveQueue;
   state.liveQueue = [];
@@ -1013,7 +1019,7 @@ function scheduleRedraw() {
     if (state.freshness) {
       C.drawFreshness($('fresh-canvas'), state.freshness, state.detail?.interval_s || 0, cursorOpts());
     }
-    if (state.profile) C.svgModHistogram($('mod-hist'), state.profile, BLOCKS_PER_SEGMENT);
+    if (state.profile) C.svgModHistogram($('mod-hist'), state.profile, blocksPerSegment(state.profile));
     if (state.rounds.length >= 2) C.svgTrends($('trend-svg'), state.rounds);
   });
 }

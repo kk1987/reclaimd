@@ -92,6 +92,10 @@ type DiskView struct {
 
 	TotalHealed  int   `json:"healed_total_n"`
 	BytesWritten int64 `json:"bytes_written_by_tool"`
+	// SegmentBytes is the daemon's segment, the superblock it sweeps and
+	// defers by. The page divides it by a profile's block size, which is
+	// resolved per disk and not always 1 MiB, to get blocks per segment.
+	SegmentBytes int64 `json:"segment_bytes"`
 	// OldestDataS is how long ago the least recently read region was last
 	// touched by this tool. The overlay's own file reads refresh data too but
 	// are invisible from the raw device, so this is a lower bound on freshness.
