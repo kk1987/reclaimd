@@ -227,7 +227,7 @@ func runScan(cfg reclaimd.Config, logger *slog.Logger, disk string, force bool) 
 	}
 	logger.Info("scan complete", "disk", disk, "outcome", sum.Outcome,
 		"slow_n", sum.SlowBlocks, "danger_n", sum.DangerBlocks,
-		"drop_n", sum.Dropouts, "healed_n", sum.Healed,
+		"drop_n", sum.Dropouts, "contended_n", sum.Contended, "healed_n", sum.Healed,
 		"read_mib", sum.BytesRead>>20)
 
 	switch sum.Outcome {

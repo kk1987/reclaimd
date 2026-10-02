@@ -29,6 +29,10 @@
   "max_throughput_mbps": 60,
   "_max_throughput_mbps": "Hard ceiling independent of the duty controller, so a live overlay always keeps headroom.",
 
+  "contention_settle": "1s",
+  "contention_retries_n": 3,
+  "_contention": "A slow reading taken while other I/O completed on the disk measured the queue, not the block: a stick serves one command at a time, and a read issued behind a filesystem's write waits for it. Such a reading is set aside and the block read again contention_settle later, up to contention_retries_n times. It counts as a slow block only if it is slow with the disk to itself, or still slow when the retries run out.",
+
   "scan_interval_init": "168h",
   "scan_interval_min": "12h",
   "scan_interval_max": "720h",

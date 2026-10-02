@@ -64,6 +64,15 @@ disk in front of it, and the UI shows the derivation.
   84% of the dropouts in the forensics had a slow block within the preceding
   10 MiB. Skipped segments are deferred and drained first next pass, so nothing
   is dropped.
+- Tells a slow block from a read that had to wait. A stick serves one command
+  at a time, so on a mounted disk a read issued while the filesystem is writing
+  comes back late by however long the write took. The kernel's I/O counters are
+  checked around every read. A slow reading taken while somebody else's I/O
+  completed is set aside and the block read again a second later, and it counts
+  only if it is still slow with the disk to itself. On one stick under a live
+  f2fs that was everything the daemon had been chasing: 117 slow blocks over 18
+  passes, at 117 different offsets, a minute apart, in step with the
+  filesystem's checkpoint.
 - Re-probes deferred blocks at the end of a pass, after waiting out the delay
   the controller's read cache needs to clear, and counts the ones that healed.
   A round that stops early ends sooner than that delay, so a re-probe that

@@ -183,6 +183,17 @@ type Config struct {
 	YieldMax         Duration `json:"yield_max"`
 	YieldGiveUp      Duration `json:"yield_give_up"`
 
+	// A slow reading taken while somebody else's I/O completed on the disk
+	// measured the queue, not the block. It is set aside and the block read
+	// again ContentionSettle later, up to ContentionRetries times, and only a
+	// reading that is slow with the disk to ourselves, or still slow when the
+	// retries run out, counts as a slow block. The rates above cannot do this
+	// job: a filesystem's checkpoint is a handful of writes once a minute,
+	// far under any rate worth yielding to, and it is enough to hold one read
+	// up for tens or hundreds of milliseconds. See readSettled.
+	ContentionSettle  Duration `json:"contention_settle"`
+	ContentionRetries int      `json:"contention_retries_n"`
+
 	// ---- scheduling ----
 
 	ScanIntervalInit Duration `json:"scan_interval_init"`
@@ -411,6 +422,12 @@ func (c *Config) withDefaults() {
 	}
 	if c.YieldGiveUp == 0 {
 		c.YieldGiveUp = Duration(10 * time.Minute)
+	}
+	if c.ContentionSettle == 0 {
+		c.ContentionSettle = Duration(time.Second)
+	}
+	if c.ContentionRetries == 0 {
+		c.ContentionRetries = 3
 	}
 	if c.ScanIntervalInit == 0 {
 		c.ScanIntervalInit = Duration(7 * 24 * time.Hour)

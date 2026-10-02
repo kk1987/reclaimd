@@ -545,13 +545,11 @@ func (rw *Rewriter) verify(ctx context.Context, req rewriteRequest, done []int64
 		if ctx.Err() != nil || time.Now().After(deadline) {
 			return
 		}
-		d, err := req.Dev.ReadBlock(off)
+		rd, err := readSettled(ctx, req.Dev, req.Ext, rw.cfg, off, req.Slow)
 		if err != nil {
 			return // do not push a disk that just failed a read
 		}
-		if req.Ext != nil {
-			req.Ext.RecordSelfRead(int(blockSize))
-		}
+		d := rd.Latency
 		if idx := off / blockSize; idx < int64(len(req.Lat.Values)) {
 			req.Lat.Set(idx, EncodeLatency(d))
 		}

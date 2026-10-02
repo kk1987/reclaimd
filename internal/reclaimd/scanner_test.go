@@ -145,6 +145,7 @@ func fastConfig(t *testing.T) Config {
 	c.ReprobeDelay = 0
 	c.ReprobeBudget = Duration(time.Minute)
 	c.ReprobeSpacing = 0
+	c.ContentionSettle = 0
 	// No real device will ever reappear for a fake disk, so do not spend the
 	// production reattach window discovering that.
 	c.ReattachTimeout = Duration(50 * time.Millisecond)

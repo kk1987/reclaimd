@@ -497,19 +497,22 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 			},
 		})
 	}
-	_ = s.store.AppendEvent(key, Event{
-		Type: EventRound, Round: res.Summary.Seq,
-		Params: map[string]any{
-			"outcome":     res.Summary.Outcome,
-			"slow_n":      res.Summary.SlowBlocks,
-			"danger_n":    res.Summary.DangerBlocks,
-			"drop_n":      res.Summary.Dropouts,
-			"healed_n":    res.Summary.Healed,
-			"rewritten_n": res.Summary.Rewritten,
-			"read_mib":    res.Summary.BytesRead >> 20,
-			"elapsed_s":   res.Summary.EndedAt.Sub(res.Summary.StartedAt).Seconds(),
-		},
-	})
+	roundParams := map[string]any{
+		"outcome":     res.Summary.Outcome,
+		"slow_n":      res.Summary.SlowBlocks,
+		"danger_n":    res.Summary.DangerBlocks,
+		"drop_n":      res.Summary.Dropouts,
+		"healed_n":    res.Summary.Healed,
+		"rewritten_n": res.Summary.Rewritten,
+		"read_mib":    res.Summary.BytesRead >> 20,
+		"elapsed_s":   res.Summary.EndedAt.Sub(res.Summary.StartedAt).Seconds(),
+	}
+	// Only when there were any: the log line shows a pass's first few values,
+	// and on a disk nobody else uses this one would always be a zero.
+	if res.Summary.Contended > 0 {
+		roundParams["contended_n"] = res.Summary.Contended
+	}
+	_ = s.store.AppendEvent(key, Event{Type: EventRound, Round: res.Summary.Seq, Params: roundParams})
 
 	// Fold this pass's own writes into the durable total. The SaveMeta below is
 	// itself a write and lands in the next pass's tally, which is a rounding
@@ -527,6 +530,7 @@ func (s *Supervisor) persistRound(st *diskState, res RoundResult) {
 		"slow_n", res.Summary.SlowBlocks,
 		"danger_n", res.Summary.DangerBlocks,
 		"drop_n", res.Summary.Dropouts,
+		"contended_n", res.Summary.Contended,
 		"healed_n", res.Summary.Healed,
 		"rewritten_n", res.Summary.Rewritten,
 		"next_scan_at", sched.NextScanAt)

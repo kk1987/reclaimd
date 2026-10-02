@@ -208,6 +208,75 @@ type ExternalIOMonitor struct {
 	busySince time.Time
 	foreignRd float64
 	foreignWr float64
+
+	// win is the counters as of the last Begin or End, the start of the
+	// window the next End measures. It is kept apart from the rate sample
+	// above, which spans a whole segment.
+	win   diskStat
+	winAt time.Time
+	winOK bool
+}
+
+// foreignIO is what somebody else did on the disk while one read of ours was
+// on it.
+type foreignIO struct {
+	Writes  uint64 // write requests completed
+	Sectors uint64 // sectors read that were not ours
+}
+
+// Any reports whether the disk was shared at all.
+func (f foreignIO) Any() bool { return f.Writes > 0 || f.Sectors > 0 }
+
+// windowReuse is how fresh the last sample has to be to stand in for one
+// taken right before a read. A sweep reads back to back, so the sample that
+// closed one read opens the next, and a read costs one look at the counters
+// and not two. After a rest it is taken again: a write that finished 200ms
+// before a read was issued did not hold that read up.
+const windowReuse = 20 * time.Millisecond
+
+// Begin opens the window around one read. It is safe on a nil monitor, which
+// is what a round without one has.
+func (m *ExternalIOMonitor) Begin() {
+	if m == nil || (m.winOK && time.Since(m.winAt) < windowReuse) {
+		return
+	}
+	st, err := m.platform.IOStats(m.presence)
+	m.win, m.winAt, m.winOK = st, time.Now(), err == nil
+}
+
+// End closes the window and reports what else completed on the disk inside
+// it. n is the bytes the read itself returned, zero if it failed, and they
+// are taken out, here and in the rate the monitor yields on.
+//
+// A USB stick serves one command at a time, so a read issued while a write
+// is in flight waits for that write, and is timed with the wait in it. On the
+// overlay that prompted this, every read past 10ms in a 400 second sample,
+// out of 105,000, had a write complete inside its window, and the write's
+// own service time matched the read's to within a few milliseconds. Unreadable
+// counters report nothing, which leaves the reading to stand as measured.
+func (m *ExternalIOMonitor) End(n int) foreignIO {
+	if m == nil {
+		return foreignIO{}
+	}
+	m.RecordSelfRead(n)
+	if !m.winOK {
+		return foreignIO{}
+	}
+	st, err := m.platform.IOStats(m.presence)
+	if err != nil {
+		m.winOK = false
+		return foreignIO{}
+	}
+	var f foreignIO
+	// A counter that went backwards was reset, as in Sample.
+	if st.writes >= m.win.writes && st.sectorsRead >= m.win.sectorsRead {
+		f.Writes = st.writes - m.win.writes
+		if d, self := st.sectorsRead-m.win.sectorsRead, uint64(n)/sectorSize; d > self {
+			f.Sectors = d - self
+		}
+	}
+	m.win, m.winAt = st, time.Now()
+	return f
 }
 
 func NewExternalIOMonitor(cfg Config, pl Platform, p Presence) *ExternalIOMonitor {
@@ -226,6 +295,9 @@ type diskStat struct {
 // already shows merges in field 4) but never invents sectors, so a sector
 // count is exact where a request count is only approximate.
 func (m *ExternalIOMonitor) RecordSelfRead(n int) {
+	if m == nil {
+		return
+	}
 	m.selfSectors += uint64(n) / sectorSize
 }
 

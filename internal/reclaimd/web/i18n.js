@@ -80,6 +80,7 @@ export const DICT = {
     'map.legend.drop': '掉线', 'map.legend.skip': '未测量',
     'map.stat': '第 {seq} 轮 · 慢 {slow} · 掉线 {drop} · 基线 {base}',
     'map.statLive': '第 {seq} 轮扫描中 · 慢 {slow} · 掉线 {drop} · 基线 {base}',
+    'map.contended': '另有 {n} 次慢读是被别的读写挡住的，不算慢块',
     'map.none': '还没有扫描数据',
 
     'stack.abs': '绝对', 'stack.prev': '对比上一轮', 'stack.first': '对比首轮',
@@ -146,6 +147,7 @@ export const DICT = {
     'event.ADOPTED': '纳入维护', 'event.PASS_RESUMED': '续扫',
     'event.COOLDOWN_OVERRIDDEN': '手动跳过冷却', 'event.PASS_STOPPED': '手动停止',
     'event.OVERWRITTEN': '已被改写', 'event.REWRITE': '重写', 'event.REWRITE_SKIPPED': '重写未执行',
+    'event.CONTENDED': '被别的读写挡住',
     'event.SPEED_TEST': '测速',
     'event.at': '位于 {off}',
 
@@ -252,6 +254,7 @@ export const DICT = {
     'map.legend.drop': 'dropout', 'map.legend.skip': 'not measured',
     'map.stat': 'pass #{seq} · {slow} slow · {drop} dropouts · baseline {base}',
     'map.statLive': 'pass #{seq}, running · {slow} slow · {drop} dropouts · baseline {base}',
+    'map.contended': '{n} slow reading(s) held up by other I/O, not counted',
     'map.none': 'No scan data yet',
 
     'stack.abs': 'Absolute', 'stack.prev': 'vs previous', 'stack.first': 'vs first',
@@ -318,6 +321,7 @@ export const DICT = {
     'event.ADOPTED': 'Adopted', 'event.PASS_RESUMED': 'Pass resumed',
     'event.COOLDOWN_OVERRIDDEN': 'Cooldown overridden', 'event.PASS_STOPPED': 'Pass stopped',
     'event.OVERWRITTEN': 'Overwritten', 'event.REWRITE': 'Rewrite', 'event.REWRITE_SKIPPED': 'Rewrite skipped',
+    'event.CONTENDED': 'Held up by other I/O',
     'event.SPEED_TEST': 'Speed test',
     'event.at': 'at {off}',
 

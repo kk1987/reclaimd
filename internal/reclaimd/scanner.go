@@ -111,6 +111,9 @@ type LiveProgress struct {
 	DropN     int     `json:"drop_n"`
 	DeferN    int     `json:"defer_n"`
 	ReprobeN  int     `json:"reprobe_n"`
+	// ContendedN counts the slow readings the round has set aside because the
+	// disk was shared while they were taken. See readSettled.
+	ContendedN int `json:"contended_n"`
 	// RewrittenN counts the slow blocks the round has written back so far.
 	// It stays zero on every round that never enters the rewrite phase.
 	RewrittenN int     `json:"rewritten_n"`
@@ -205,7 +208,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 
 	duty := NewDutyController(cfg)
 	var retries []retryEntry
-	var blocksRead, slow, danger, media, dropouts, rewritten int
+	var blocksRead, slow, danger, media, dropouts, rewritten, contended int
 	var reprobeAt time.Time
 	totalMiB := (blockCount * blockSize) >> 20
 
@@ -236,7 +239,7 @@ func (s *Scanner) Round(ctx context.Context, in RoundInput) (RoundResult, error)
 			ElapsedS: round2(elapsed), ETAS: round2(eta),
 			SlowN: slow, DangerN: danger, DropN: dropouts,
 			DeferN: deferred.Count(), ReprobeN: len(retries), RewrittenN: rewritten,
-			SlowMs: msOf(base.Slow), DangerMs: msOf(base.Danger),
+			ContendedN: contended, SlowMs: msOf(base.Slow), DangerMs: msOf(base.Danger),
 			Phase: phase,
 		}
 		if !reprobeAt.IsZero() {
@@ -279,11 +282,19 @@ sweep:
 
 		for idx := first; idx < last; idx++ {
 			off := idx * blockSize
-			d, err := dev.ReadBlock(off)
+			rd, err := readSettled(ctx, dev, in.Ext, cfg, off, base.Slow)
+			d := rd.Latency
 
 			switch {
 			case err == nil:
 				// fall through to threshold checks
+
+			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				// Stopped while waiting to read the block again. Nothing was
+				// settled about it, so it stays unread and the next round
+				// starts from this segment.
+				outcome, fatal = OutcomeCancelled, err
+				break sweep
 
 			case errors.Is(err, ErrDeviceDisconnected):
 				lat.Set(idx, LatError)
@@ -316,8 +327,10 @@ sweep:
 			lat.Set(idx, EncodeLatency(d))
 			blocksRead++
 			cursor = off + blockSize
-			if in.Ext != nil {
-				in.Ext.RecordSelfRead(cfg.BlockSize)
+			if rd.Contended {
+				contended++
+				s.noteContended(in.Key, seq, off, rd)
+				emit(PhaseSweep, off)
 			}
 
 			if d >= base.Danger {
@@ -377,19 +390,21 @@ sweep:
 		}
 	}
 
-	healed, stillSlow, overwritten := 0, 0, 0
+	healed, stillSlow, overwritten, reContended := 0, 0, 0, 0
 	reprobing := outcome != OutcomeDropout && outcome != OutcomeCancelled && len(retries) > 0
 	if reprobing {
 		reprobeAt = time.Now().Add(s.reprobeWait(retries))
 	}
 	emit(PhaseReprobe, cursor)
 	if outcome != OutcomeDropout && outcome != OutcomeCancelled {
-		healed, stillSlow, overwritten = s.reprobe(ctx, in, retries, base, lat, blockSize)
+		healed, stillSlow, overwritten, reContended = s.reprobe(ctx, in, retries, base, lat, blockSize)
+		contended += reContended
 	}
 	reprobeAt = time.Time{}
 	res.Summary.Healed = healed
 	res.Summary.StillSlow = stillSlow
 	res.Summary.Overwritten = overwritten
+	res.Summary.Contended = contended
 
 	// The rewrite comes after the re-probe because the re-probe is its
 	// evidence: this round's tally joins the earlier ones, and only a drive
@@ -516,6 +531,95 @@ func (s *Scanner) onDropout(ctx context.Context, in RoundInput, seg int, off int
 	s.logger.Info("device re-enumerated", "disk", in.Key, "kernel_name", p.KernelName)
 }
 
+// settled is one block's reading, with other I/O on the disk ruled out as the
+// reason for it as far as that can be done.
+type settled struct {
+	// Latency is the reading that stands.
+	Latency time.Duration
+	// Contended says an earlier reading of the block was slow and was set
+	// aside: the disk was shared while it was taken, and the block then read
+	// at normal speed. Was is that reading and Foreign what shared the disk.
+	Contended bool
+	Was       time.Duration
+	Foreign   foreignIO
+}
+
+// readSettled reads one block and decides whether the time it took says
+// anything about the block.
+//
+// A slow reading stands when nothing else completed on the disk while it was
+// taken. When something did, the reading measured the queue: the read waited
+// behind somebody else's request, and how long that took is a fact about
+// their request. So the block is read again once the other party has had time
+// to finish, and the first reading is set aside only if the block then reads
+// at normal speed. A re-read that is slow with the disk to ourselves is a slow
+// block. One that is still slow and still shared when the retries run out
+// cannot be told apart from one, and is treated as one.
+//
+// This came from a 16 GB stick carrying a mounted f2fs. Over 18 passes it
+// showed 117 slow blocks at 117 different offsets, uniform across the disk and
+// within the segment, every one of them healed on the re-probe, and the
+// interval sat pinned at its floor chasing them. The gaps between consecutive
+// slow blocks in a pass clustered on multiples of 61 seconds, and the
+// filesystem's own counters put its background checkpoint at one every 62.
+// Nothing was wrong with any block.
+//
+// Reading the block again a second later is what the re-probe refuses to do,
+// because the controller's read cache can answer in place of the NAND. The
+// difference is what is at stake. The re-probe's fast reading is evidence that
+// the controller reclaimed the block. Here a fast reading only withdraws an
+// accusation that already had an alibi, and a block that really is slow, on a
+// drive that does not reclaim it, is still slow on the next pass.
+func readSettled(ctx context.Context, dev BlockReader, ext *ExternalIOMonitor,
+	cfg Config, off int64, slow time.Duration) (settled, error) {
+
+	read := func() (time.Duration, foreignIO, error) {
+		ext.Begin()
+		d, err := dev.ReadBlock(off)
+		if err != nil {
+			ext.End(0)
+			return d, foreignIO{}, err
+		}
+		return d, ext.End(dev.BlockSize()), nil
+	}
+
+	d, foreign, err := read()
+	if err != nil || d < slow || !foreign.Any() {
+		return settled{Latency: d}, err
+	}
+	first, shared := d, foreign
+	for try := 0; try < cfg.ContentionRetries; try++ {
+		if err := sleepCtx(ctx, cfg.ContentionSettle.Duration()); err != nil {
+			return settled{Latency: d}, err
+		}
+		if d, foreign, err = read(); err != nil {
+			return settled{Latency: d}, err
+		}
+		if d < slow {
+			return settled{Latency: d, Contended: true, Was: first, Foreign: shared}, nil
+		}
+		if !foreign.Any() {
+			break
+		}
+	}
+	return settled{Latency: d}, nil
+}
+
+// noteContended writes down a slow reading that was set aside, with what it
+// read at both times and what else was on the disk the first time.
+func (s *Scanner) noteContended(key string, seq uint64, off int64, rd settled) {
+	_ = s.store.AppendEvent(key, Event{
+		Type: EventContended, Round: seq, Offset: off,
+		Params: map[string]any{
+			"was_ms":           rd.Was.Milliseconds(),
+			"now_ms":           rd.Latency.Milliseconds(),
+			"offset_mib":       off >> 20,
+			"foreign_writes_n": rd.Foreign.Writes,
+			"foreign_read_kib": rd.Foreign.Sectors * sectorSize >> 10,
+		},
+	})
+}
+
 func (s *Scanner) deferBlock(key string, seq uint64, off int64, d time.Duration,
 	kind string, delay time.Duration, hash uint64) retryEntry {
 
@@ -628,10 +732,10 @@ func (s *Scanner) reprobeWait(entries []retryEntry) time.Duration {
 }
 
 func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEntry,
-	base Baseline, lat *LatencyMap, blockSize int64) (healed, stillSlow, overwritten int) {
+	base Baseline, lat *LatencyMap, blockSize int64) (healed, stillSlow, overwritten, contended int) {
 
 	if len(entries) == 0 {
-		return 0, 0, 0
+		return 0, 0, 0, 0
 	}
 	entries = s.reprobeEntries(entries)
 
@@ -652,7 +756,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 	wait := s.reprobeWait(entries)
 	if wait > 0 {
 		if err := sleepCtx(ctx, wait); err != nil {
-			return 0, 0, 0
+			return 0, 0, 0, 0
 		}
 	}
 
@@ -673,10 +777,18 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 			if off < 0 || off >= in.Dev.Size() {
 				continue
 			}
-			d, err := in.Dev.ReadBlock(off)
+			// A re-probe reading goes straight into the verdict on whether
+			// reads refresh this drive, so one that was only held up by
+			// somebody else's write must not come out as still slow.
+			rd, err := readSettled(ctx, in.Dev, in.Ext, s.cfg, off, base.Slow)
 			if err != nil {
 				failed = true
 				break
+			}
+			d := rd.Latency
+			if rd.Contended {
+				contended++
+				s.noteContended(in.Key, lat.RoundSeq, off, rd)
 			}
 			if k == 0 {
 				nowHash = lastHash(in.Dev)
@@ -690,7 +802,7 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 		}
 		if failed {
 			// Do not push our luck on a disk that just failed a re-probe.
-			return healed, stillSlow, overwritten
+			return healed, stillSlow, overwritten, contended
 		}
 
 		switch {
@@ -735,10 +847,10 @@ func (s *Scanner) reprobe(ctx context.Context, in RoundInput, entries []retryEnt
 			})
 		}
 		if err := sleepCtx(ctx, s.cfg.ReprobeSpacing.Duration()); err != nil {
-			return healed, stillSlow, overwritten
+			return healed, stillSlow, overwritten, contended
 		}
 	}
-	return healed, stillSlow, overwritten
+	return healed, stillSlow, overwritten, contended
 }
 
 // segmentOrder decides what to read and in what order: everything owed from

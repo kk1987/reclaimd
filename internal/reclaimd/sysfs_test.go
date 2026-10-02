@@ -275,3 +275,29 @@ func (f *fakeTree) removeDisk(name string) {
 		f.t.Fatal(err)
 	}
 }
+
+// The counters are read from the disk's own stat file, found by device
+// number. The line is the one the stick on the router reported, and a round
+// reads it once per block, so the fields it takes had better be the right
+// ones.
+func TestIOStatsReadsTheDisksOwnStatFile(t *testing.T) {
+	f := newFakeTree(t)
+	f.write(filepath.Join("sys", "dev", "block", "8:0", "stat"),
+		" 1489448    41251 188497776  4124981   110358     6201  3162056   327611"+
+			"        2  4342730  4452592        0        0        0        0        0        0\n")
+	f.write(filepath.Join("sys", "dev", "block", "8:16", "stat"), "1 2 3\n")
+
+	st, err := f.roots().IOStats(Presence{Major: 8, Minor: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (diskStat{sectorsRead: 188497776, writes: 110358, inFlight: 2}); st != want {
+		t.Errorf("stat = %+v, want %+v", st, want)
+	}
+	if _, err := f.roots().IOStats(Presence{Major: 8, Minor: 16}); err == nil {
+		t.Error("a truncated stat file was accepted")
+	}
+	if _, err := f.roots().IOStats(Presence{Major: 8, Minor: 32}); err == nil {
+		t.Error("a disk with no stat file was accepted")
+	}
+}

@@ -577,6 +577,7 @@ function renderMap() {
   }
   const live = state.detail?.live;
   label.textContent = I.fmtAbs(p.startedTs);
+  let contended = 0;
   if (p === state.liveProfile && live) {
     stat.textContent = I.t('map.statLive', {
       seq: p.seq,
@@ -584,6 +585,7 @@ function renderMap() {
       drop: I.fmtNum(live.drop_n || 0),
       base: I.fmtLatency(p.baselineMs),
     });
+    contended = live.contended_n || 0;
   } else {
     const last = state.rounds[state.rounds.length - 1];
     stat.textContent = I.t('map.stat', {
@@ -592,7 +594,11 @@ function renderMap() {
       drop: I.fmtNum(last?.dropouts_n || 0),
       base: I.fmtLatency(p.baselineMs),
     });
+    contended = last?.contended_n || 0;
   }
+  /* Said only when there were any. On a disk nobody else uses there never
+     are, and a standing zero would be one more number to wonder about. */
+  if (contended) stat.textContent += ' · ' + I.t('map.contended', { n: I.fmtNum(contended) });
   C.drawStrip($('map-canvas'), p, cursorOpts());
   $('map-legend').innerHTML = C.legendHTML(p.baselineMs);
 
@@ -905,6 +911,13 @@ function renderEvents() {
       parts.length = 0;
       parts.push(`code=${raw.code || ''}`, `candidates=${I.fmtNum(raw.candidates_n || 0)}`);
       if (raw.error) parts.push(raw.error);
+    } else if (e.type === 'CONTENDED') {
+      /* A slow reading that was set aside: what it read at, what the block
+         read at once the disk was quiet, and what else was on the disk. */
+      parts.length = 0;
+      parts.push(`was=${I.fmtLatency(raw.was_ms)}`, `now=${I.fmtLatency(raw.now_ms)}`);
+      if (raw.foreign_writes_n) parts.push(`foreignWrites=${I.fmtNum(raw.foreign_writes_n)}`);
+      if (raw.foreign_read_kib) parts.push(`foreignRead=${I.fmtNum(raw.foreign_read_kib)} KiB`);
     } else if (e.type === 'SPEED_TEST') {
       parts.length = 0;
       parts.push(`avg=${I.fmtSpeed(raw.avg_mibs)}`,

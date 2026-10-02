@@ -382,39 +382,41 @@ func unescapeMount(s string) string {
 	return b.String()
 }
 
-// IOStats reads /proc/diskstats, a procfs read that never touches the bus.
+// IOStats reads the disk's own stat file in sysfs, which never touches the
+// bus.
 //
-// It locates the row by device number. After a re-enumeration the kernel name
+// It finds the file by device number. After a re-enumeration the kernel name
 // changes from sda to sdb, and a name-keyed lookup would quietly start
 // describing a different disk, or the same disk under a stale name, which is
 // worse because it looks plausible.
+//
+// The same counters are in /proc/diskstats, one row per block device on the
+// machine. A round asks once per read, and on the router that prompted this,
+// with 43 rows, the whole table cost 255us a time against 45us for the one
+// file, next to a read that takes 2.8ms.
 func (r Roots) IOStats(p Presence) (diskStat, error) {
-	f, err := os.Open(filepath.Join(r.Proc, "diskstats"))
+	path := filepath.Join(r.Sys, "dev", "block", fmt.Sprintf("%d:%d", p.Major, p.Minor), "stat")
+	f, err := os.Open(path)
 	if err != nil {
 		return diskStat{}, err
 	}
 	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 14 {
-			continue
-		}
-		maj, err1 := strconv.Atoi(fields[0])
-		min, err2 := strconv.Atoi(fields[1])
-		if err1 != nil || err2 != nil || maj != p.Major || min != p.Minor {
-			continue
-		}
-		// Field indices are the post-5.5 layout: 5 sectors read, 7 writes
-		// completed, 11 in-flight. Sectors are 512-byte units regardless of the
-		// device's logical block size.
-		sr, _ := strconv.ParseUint(fields[5], 10, 64)
-		w, _ := strconv.ParseUint(fields[7], 10, 64)
-		inf, _ := strconv.ParseUint(fields[11], 10, 64)
-		return diskStat{sectorsRead: sr, writes: w, inFlight: inf}, nil
+	var buf [512]byte
+	n, err := f.Read(buf[:])
+	if err != nil {
+		return diskStat{}, err
 	}
-	return diskStat{}, fmt.Errorf("no diskstats row for %d:%d", p.Major, p.Minor)
+	// The layout is the one diskstats has after its three naming columns: 2
+	// sectors read, 4 writes completed, 8 in-flight. Sectors are 512-byte units
+	// regardless of the device's logical block size.
+	fields := strings.Fields(string(buf[:n]))
+	if len(fields) < 9 {
+		return diskStat{}, fmt.Errorf("malformed %s: %d fields", path, len(fields))
+	}
+	sr, _ := strconv.ParseUint(fields[2], 10, 64)
+	w, _ := strconv.ParseUint(fields[4], 10, 64)
+	inf, _ := strconv.ParseUint(fields[8], 10, 64)
+	return diskStat{sectorsRead: sr, writes: w, inFlight: inf}, nil
 }
 
 // Uptime reads /proc/uptime. Comparing wall clocks would not do, because on a

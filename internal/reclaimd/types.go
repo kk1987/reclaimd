@@ -90,6 +90,11 @@ type RoundSummary struct {
 	// sweep and the re-probe. The filesystem wrote it, so it reads fast for
 	// that reason, and it counts as neither healed nor still slow.
 	Overwritten int `json:"overwritten_n,omitempty"`
+	// Contended is a slow reading that was set aside: other I/O completed on
+	// the disk while it was taken, and the block read at normal speed once
+	// the disk was quiet. It is not a slow block and moves nothing a slow
+	// block moves.
+	Contended int `json:"contended_n,omitempty"`
 	// Rewritten is how many slow blocks this round wrote back in place, and
 	// RewriteHealed how many of those read at normal speed afterwards.
 	Rewritten      int   `json:"rewritten_n,omitempty"`
@@ -119,6 +124,9 @@ const (
 	// EventOverwritten is a re-probed block whose bytes changed since the
 	// sweep read it. See RoundSummary.Overwritten.
 	EventOverwritten = "OVERWRITTEN"
+	// EventContended is a slow reading set aside because the disk was shared
+	// while it was taken. See RoundSummary.Contended.
+	EventContended = "CONTENDED"
 	// EventRewrite records one round's rewrite phase: what it wrote back, how
 	// long the filesystem was frozen for, and what the write-back did to the
 	// blocks. EventRewriteSkipped says why a round that wanted to rewrite did
