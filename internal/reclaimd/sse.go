@@ -50,12 +50,25 @@ func (h *Hub) Subscribe(lastID uint64) (<-chan Frame, func(), bool) {
 	ch := make(chan Frame, 8)
 	h.clients[ch] = struct{}{}
 
-	// Replay anything the client missed while reconnecting.
-	for _, f := range h.ring {
-		if f.ID > lastID {
-			select {
-			case ch <- f:
-			default:
+	// Replay what the client missed while reconnecting. A client that names no
+	// last frame has missed nothing, it is a page that has just fetched the lot.
+	// It used to be sent the oldest frames in the ring, as many as the buffer
+	// held: eight SCAN_STARTs and SCAN_ENDs of rounds long over, each of which
+	// had the page load everything again. A gap the buffer cannot hold is a
+	// resync, for the same reason it is one in Publish.
+	if lastID > 0 {
+		first := len(h.ring)
+		for i, f := range h.ring {
+			if f.ID > lastID {
+				first = i
+				break
+			}
+		}
+		if missed := h.ring[first:]; len(missed) > cap(ch) {
+			ch <- Frame{Event: "resync", ID: missed[len(missed)-1].ID, Data: []byte(`{}`)}
+		} else {
+			for _, f := range missed {
+				ch <- f
 			}
 		}
 	}

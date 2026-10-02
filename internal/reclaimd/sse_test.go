@@ -56,6 +56,44 @@ func TestShutdownIsNotHeldOpenByAStream(t *testing.T) {
 	}
 }
 
+// The regression: a page that had only just loaded was replayed the oldest
+// frames in the ring, eight of them, and reloaded itself once for each. The
+// loads overlapped and the healing waterfall drew every pass eight times.
+func TestOnlyAResumingStreamIsReplayed(t *testing.T) {
+	hub := NewHub()
+	for i := 0; i < 20; i++ {
+		hub.Publish("state", map[string]any{"change": "SCAN_END"})
+	}
+
+	drain := func(lastID uint64) []Frame {
+		ch, cancel, ok := hub.Subscribe(lastID)
+		if !ok {
+			t.Fatal("subscribe was refused")
+		}
+		defer cancel()
+		var got []Frame
+		for len(ch) > 0 {
+			got = append(got, <-ch)
+		}
+		return got
+	}
+
+	if got := drain(0); len(got) != 0 {
+		t.Errorf("a fresh stream was replayed %d frames", len(got))
+	}
+
+	got := drain(17)
+	if len(got) != 3 || got[0].ID != 18 || got[2].ID != 20 {
+		t.Errorf("resuming after 17 replayed %+v, want frames 18 to 20", got)
+	}
+
+	// Further behind than the buffer holds: one resync, not the oldest few.
+	got = drain(2)
+	if len(got) != 1 || got[0].Event != "resync" || got[0].ID != 20 {
+		t.Errorf("resuming after 2 replayed %+v, want a single resync", got)
+	}
+}
+
 // A request that arrives while the hub is closing must be refused a stream.
 // The alternative is a channel nothing will ever close.
 func TestClosedHubRefusesNewStreams(t *testing.T) {

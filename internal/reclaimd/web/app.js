@@ -93,11 +93,18 @@ async function boot() {
   wireChrome();
   loadSystem();
   await refreshAll();
+  let greeted = false;
   connect({
     onHello: (d) => {
       if (d.disks) { state.disks = d.disks; renderDiskbar(); }
       setConn('live');
       loadSystem();
+      /* The first hello follows the fetch just above. Any later one opens a
+         stream that was down for a while, behind a hidden tab or a restarted
+         daemon, and nothing that happened in between was reported: a round
+         may have ended. */
+      if (greeted) refreshAll();
+      greeted = true;
     },
     onProgress: onProgress,
     onState: async (d) => {
@@ -265,32 +272,52 @@ async function refreshDetail(soft) {
   renderAll();
 }
 
+/* A load can be overtaken: a second state event, or a click on another disk,
+   starts the next one while this one is still fetching. The passes used to be
+   pushed into state.stack as they arrived, so loads that overlapped all filled
+   the same array and the waterfall drew every pass once per load. Only the
+   newest load writes anything now, and the stack goes in whole. */
+let loadGen = 0;
+
 async function loadProfiles() {
+  const gen = ++loadGen;
+  const stale = () => gen !== loadGen;
+  const key = state.selected;
   state.profile = null;
   state.stack = [];
   dropLive();
-  try {
-    state.profile = decodeProfile(await api.getProfile(state.selected, 'latest'));
-  } catch (e) { /* no pass yet */ }
 
+  let profile = null;
   try {
-    const buf = await api.getFreshness(state.selected);
-    state.freshness = new Uint32Array(buf);
-  } catch (e) { state.freshness = null; }
+    profile = decodeProfile(await api.getProfile(key, 'latest'));
+  } catch (e) { /* no pass yet */ }
+  if (stale()) return;
+  state.profile = profile;
+
+  let freshness = null;
+  try {
+    freshness = new Uint32Array(await api.getFreshness(key));
+  } catch (e) { /* no pass yet */ }
+  if (stale()) return;
+  state.freshness = freshness;
 
   /* A page opened on a disk mid-round starts from the map as far as it has
      got, and fills the rest in from the frames. After the freshness, which
      this stands in for on a first round. */
   if (state.detail?.live) await loadLive(state.detail.live.seq);
+  if (stale()) return;
 
   /* Only completed passes are fetched for the waterfall, and those are
      immutable and cached, so this costs one request per pass ever. */
   const seqs = state.rounds.map((r) => r.seq).filter(Boolean).slice(-10);
+  const stack = [];
   for (const seq of seqs) {
     try {
-      state.stack.push(decodeProfile(await api.getProfile(state.selected, seq)));
+      stack.push(decodeProfile(await api.getProfile(key, seq)));
     } catch (e) { /* pruned out of retention */ }
+    if (stale()) return;
   }
+  state.stack = stack;
 }
 
 /* ------------------------------------------------------------- render ---- */
